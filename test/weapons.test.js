@@ -14,6 +14,14 @@ const GAME_DATA = {
   '/constants/reforgestones.json': {},
   '/constants/reforges.json': { Sharp: { reforgeName: 'Sharp', itemTypes: 'SWORD/ROD', reforgeStats: { LEGENDARY: { crit_chance: 20 } } } },
   '/constants/Enchants.json': { NORMAL: { sharpness: { loreName: 'Sharpness', nbtName: 'sharpness', maxLevel: 7 } } },
+  // The Art of War is on the Bazaar with nobody selling, so its auction price has to win.
+  '/v2/skyblock/bazaar': {
+    products: {
+      ENCHANTMENT_SHARPNESS_7: { quick_status: { buyPrice: 100 } },
+      THE_ART_OF_WAR: { quick_status: { buyPrice: 0 } },
+    },
+  },
+  '/pricesV2.json': { ENCHANTMENT_SHARPNESS_7: 999, THE_ART_OF_WAR: 500 },
 };
 
 const json = (body, status = 200) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -37,6 +45,7 @@ function fakeNetwork(t, routes = {}) {
     if (hostname === 'api.mojang.com') return routes.mojang ? routes.mojang() : json({ id: UUID, name: 'Steve' });
     if (hostname === 'playerdb.co') return routes.playerdb ? routes.playerdb() : json({ code: 'minecraft.invalid_username' }, 400);
     if (pathname === '/v2/skyblock/profiles') return routes.profiles ? routes.profiles() : json({ success: true, profiles: PROFILES });
+    if (routes.prices && /bazaar|pricesV2/.test(pathname)) return routes.prices(pathname);
     if (routes.gameData) return routes.gameData(pathname);
     const data = Object.entries(GAME_DATA).find(([suffix]) => pathname.endsWith(suffix));
     if (!data) throw new Error(`Unexpected request to ${url}`);
@@ -99,6 +108,75 @@ test('reforge suggestions come from the saved auction house data', async (t) => 
   const { reforge } = body.profiles[0].weapons[0];
   assert.equal(reforge.basedOn, 'weapon');
   assert.ok(reforge.picks.length > 0);
+});
+
+const firstWeapon = async (response) => (await response.json()).profiles[0].weapons[0];
+const artOfWar = (weapon) => weapon.upgrades.find((row) => row.label === 'The Art of War').coins;
+const sharpness = (weapon) => weapon.enchants.upgrade.find((entry) => entry.id === 'sharpness').coins;
+const down = () => new Response('down', { status: 500 });
+
+test('prices use the Bazaar first, and auctions for anything not selling there', async (t) => {
+  fakeNetwork(t);
+  const weapon = await firstWeapon(await get(freshFunction(t)));
+  assert.equal(sharpness(weapon), 100); // Bazaar's 100, not the auction price of 999.
+  assert.equal(artOfWar(weapon), 500); // Nobody selling on the Bazaar.
+  assert.ok(weapon.cost.total >= 600);
+});
+
+test('with both price sources down, searches still work with no estimate', async (t) => {
+  silenceLogs(t);
+  fakeNetwork(t, { prices: down });
+  const response = await get(freshFunction(t));
+  assert.equal(response.status, 200);
+  const weapon = await firstWeapon(response);
+  assert.equal(weapon.cost, null);
+  assert.equal(weapon.progress.total > 0, true);
+});
+
+test('with only the Bazaar down, auction prices are used', async (t) => {
+  fakeNetwork(t, { prices: (pathname) => (pathname.includes('bazaar') ? down() : json(GAME_DATA['/pricesV2.json'])) });
+  const weapon = await firstWeapon(await get(freshFunction(t)));
+  assert.equal(sharpness(weapon), 999);
+});
+
+test('with only auction prices down, Bazaar prices are used and the rest is flagged', async (t) => {
+  fakeNetwork(t, { prices: (pathname) => (pathname.includes('bazaar') ? json(GAME_DATA['/v2/skyblock/bazaar']) : down()) });
+  const weapon = await firstWeapon(await get(freshFunction(t)));
+  assert.equal(sharpness(weapon), 100);
+  assert.equal(artOfWar(weapon), null);
+  assert.ok(weapon.cost.unpriced.includes('The Art of War'));
+});
+
+test('prices are reused for a while, then refreshed', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+  const calls = fakeNetwork(t);
+  const fn = freshFunction(t);
+  const bazaarCalls = () => calls.filter((call) => call.pathname.endsWith('/skyblock/bazaar')).length;
+  await get(fn);
+  t.mock.timers.tick(5 * 60 * 1000);
+  await get(fn);
+  assert.equal(bazaarCalls(), 1);
+  t.mock.timers.tick(6 * 60 * 1000);
+  await get(fn);
+  assert.equal(bazaarCalls(), 2);
+});
+
+test('if a price refresh fails, the last good prices are kept', async (t) => {
+  silenceLogs(t);
+  t.mock.timers.enable({ apis: ['Date'], now: 1_000_000 });
+  let broken = false;
+  fakeNetwork(t, {
+    prices: (pathname) => {
+      if (broken) return down();
+      return json(pathname.includes('bazaar') ? GAME_DATA['/v2/skyblock/bazaar'] : GAME_DATA['/pricesV2.json']);
+    },
+  });
+  const fn = freshFunction(t);
+  await get(fn);
+  broken = true;
+  t.mock.timers.tick(11 * 60 * 1000);
+  const weapon = await firstWeapon(await get(fn));
+  assert.equal(sharpness(weapon), 100);
 });
 
 test('bad usernames are refused before anything is looked up', async (t) => {

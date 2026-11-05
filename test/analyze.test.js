@@ -7,7 +7,7 @@ const realItem = require('./real-item.json');
 
 // A cut-down copy of the three upstream data files, in their real shapes.
 const SWORD_ENCHANTS = [
-  'sharpness', 'smite', 'knockback', 'execute', 'PROSECUTE', 'first_strike', 'triple_strike', 'syphon', 'life_steal', 'mana_steal', 'champion',
+  'sharpness', 'smite', 'knockback', 'impaling', 'execute', 'PROSECUTE', 'first_strike', 'triple_strike', 'syphon', 'life_steal', 'mana_steal', 'champion',
   'ultimate_wise', 'ultimate_soul_eater', 'ultimate_one_for_all',
 ];
 const game = buildGameData(
@@ -45,7 +45,7 @@ const game = buildGameData(
     ],
   },
   {
-    enchants: { SWORD: [...SWORD_ENCHANTS, 'ultimate_chimera'], BOW: ['sharpness', 'ultimate_chimera'] },
+    enchants: { SWORD: [...SWORD_ENCHANTS, 'ultimate_chimera'], BOW: ['sharpness', 'punch', 'ultimate_chimera'] },
     enchant_pools: [
       ['ultimate_wise', 'ultimate_soul_eater', 'ultimate_one_for_all'],
       ['execute', 'PROSECUTE'],
@@ -61,6 +61,8 @@ const game = buildGameData(
       sharpness: { loreName: 'Sharpness', nbtName: 'sharpness', maxLevel: 7 },
       smite: { loreName: 'Smite', nbtName: 'smite', maxLevel: 7 },
       knockback: { loreName: 'Knockback', nbtName: 'knockback', maxLevel: 2 },
+      punch: { loreName: 'Punch', nbtName: 'punch', maxLevel: 2 },
+      impaling: { loreName: 'Impaling', nbtName: 'impaling', maxLevel: 5 },
       execute: { loreName: 'Execute', nbtName: 'execute', maxLevel: 6 },
       prosecute: { loreName: 'Prosecute', nbtName: 'PROSECUTE', maxLevel: 6 },
       first_strike: { loreName: 'First Strike', nbtName: 'first_strike', maxLevel: 5 },
@@ -160,7 +162,8 @@ test('ultimate enchants are a single slot', () => {
   assert.deepEqual(ids(none.ultimateOptions).sort(), ['ultimate_chimera', 'ultimate_one_for_all', 'ultimate_soul_eater', 'ultimate_wise']);
 
   const low = analyze({ enchantments: { ultimate_wise: 3 } }).enchants;
-  assert.deepEqual(low.ultimate, { id: 'ultimate_wise', name: 'Ultimate Wise', level: 3, max: 5 });
+  const { id, name, level, max } = low.ultimate;
+  assert.deepEqual({ id, name, level, max }, { id: 'ultimate_wise', name: 'Ultimate Wise', level: 3, max: 5 });
   assert.deepEqual(low.ultimateOptions, []);
 });
 
@@ -183,6 +186,25 @@ test('knockback never counts against the score', () => {
   const low = analyze({ enchantments: { knockback: 1 } }).enchants;
   assert.ok(ids(low.skippable).includes('knockback'));
   assert.ok(!ids(low.upgrade).includes('knockback'));
+});
+
+test('punch is not required on bows', () => {
+  const bow = (extra) => analyzeWeapon(item({ id: 'PLAIN_BOW', ...extra }, ['§9§lRARE BOW']), 'Inventory', game);
+  const missing = bow({}).enchants;
+  assert.ok(ids(missing.skippable).includes('punch'));
+  assert.ok(!ids(missing.missing).includes('punch'));
+  const low = bow({ enchantments: { punch: 1 } }).enchants;
+  assert.ok(ids(low.skippable).includes('punch'));
+  assert.ok(!ids(low.upgrade).includes('punch'));
+});
+
+test('enchants that are not required never change the score, on or off', () => {
+  const score = (id, extra) => analyzeWeapon(item({ id, ...extra }), 'Inventory', game).progress;
+  const bowWithout = score('PLAIN_BOW', {});
+  assert.deepEqual(score('PLAIN_BOW', { enchantments: { punch: 1 } }), bowWithout);
+  assert.deepEqual(score('PLAIN_BOW', { enchantments: { punch: 2 } }), bowWithout);
+  const swordWithout = score('PLAIN_SWORD', {});
+  assert.deepEqual(score('PLAIN_SWORD', { enchantments: { knockback: 2 } }), swordWithout);
 });
 
 test('stacking enchants report their progress', () => {
@@ -287,7 +309,7 @@ test('a filled slot counts as unlocked on older items with no unlock list', () =
 test('a fully maxed weapon reads 100% with nothing left', () => {
   const everything = {
     enchantments: {
-      sharpness: 7, smite: 7, knockback: 2, execute: 6, first_strike: 5, syphon: 5, champion: 3, ultimate_wise: 5,
+      sharpness: 7, smite: 7, knockback: 2, impaling: 5, execute: 6, first_strike: 5, syphon: 5, champion: 3, ultimate_wise: 5,
     },
     hot_potato_count: 15,
     rarity_upgrades: 1,
@@ -299,9 +321,36 @@ test('a fully maxed weapon reads 100% with nothing left', () => {
   assert.equal(progress.percent, 100);
 });
 
+test('an enchant one level short of max counts for half', () => {
+  const percent = (level) => analyze({ enchantments: { sharpness: level } }).progress.percent;
+  const steps = analyze({ enchantments: { sharpness: 7 } }).progress.total;
+  assert.equal(percent(7), Math.floor((1 / steps) * 100));
+  assert.equal(percent(6), Math.floor((0.5 / steps) * 100));
+  assert.equal(percent(5), 0);
+  assert.equal(percent(1), 0);
+});
+
+test('half credit still counts as something left to do', () => {
+  const { left } = analyze({ enchantments: { sharpness: 7 } }).progress;
+  assert.equal(analyze({ enchantments: { sharpness: 6 } }).progress.left, left + 1);
+});
+
+test('half credit applies to ultimate enchants too', () => {
+  const percent = (level) => analyze({ enchantments: { ultimate_wise: level } }).progress.percent;
+  const { total } = analyze({ enchantments: { ultimate_wise: 5 } }).progress;
+  assert.equal(percent(5), Math.floor((1 / total) * 100));
+  assert.equal(percent(4), Math.floor((0.5 / total) * 100));
+  assert.equal(percent(3), 0);
+});
+
+test('half credits add up', () => {
+  const { total, percent } = analyze({ enchantments: { sharpness: 6, smite: 6 } }).progress;
+  assert.equal(percent, Math.floor((1 / total) * 100));
+});
+
 test('a nearly maxed weapon never rounds up to 100%', () => {
   const { progress } = analyze({
-    enchantments: { sharpness: 6, smite: 7, execute: 6, first_strike: 5, syphon: 5, champion: 3, ultimate_wise: 5 },
+    enchantments: { sharpness: 6, smite: 7, impaling: 5, execute: 6, first_strike: 5, syphon: 5, champion: 3, ultimate_wise: 5 },
     hot_potato_count: 15,
     rarity_upgrades: 1,
     art_of_war_count: 1,

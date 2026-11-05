@@ -33,7 +33,7 @@ const STAR_RUN = /([✪➊➋➌➍➎]+)/;
 // Hypixel draws stat icons with a private game font that browsers don't have. Left in, they
 // show as empty boxes, so they get dropped, except gem slots where "[]" would look broken.
 const stripGameIcons = (text) =>
-  text.replace(/(\[(?:§.)*)[-]((?:§.)*\])/g, '$1◆$2').replace(/[-]/g, '');
+  text.replace(/(\[(?:§.)*)[\uE000-\uF8FF]((?:§.)*\])/g, '$1◆$2').replace(/[\uE000-\uF8FF]/g, '');
 
 /** Renders Minecraft's § formatting codes as coloured spans. */
 function mcText(text) {
@@ -84,6 +84,15 @@ function roman(value) {
 
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
 const formatTime = (iso) => new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+const coinFormat = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+const formatCoins = (coins) => `${coinFormat.format(coins)} coins`;
+
+/** Adds a price to a row's note. Null means there's no market price to go on. */
+function withCoins(note, coins, prefix = 'About') {
+  const price = coins === null ? 'No market price' : coins > 0 ? `${prefix} ${formatCoins(coins)}` : null;
+  return [note, price].filter(Boolean).join('. ');
+}
+
 const currentProfile = () => state.player.profiles.find((profile) => profile.id === state.profileId);
 
 function bar(percent, label) {
@@ -119,17 +128,18 @@ function section(title, leftCount, ...content) {
 }
 
 function enchantSection(enchants) {
-  const { ultimate, ultimateOptions, upgrade, missing, pickOne, skippable, maxed, other, oneForAll } = enchants;
+  const { ultimate, ultimateOptions, cheapestUltimate, upgrade, missing, pickOne, skippable, maxed, other, oneForAll } = enchants;
   const ultimateLeft = ultimate ? (ultimate.max !== null && ultimate.level < ultimate.max ? 1 : 0) : ultimateOptions.length ? 1 : 0;
 
   let ultimateRow = null;
   if (ultimate) {
     const isMax = ultimate.max === null || ultimate.level >= ultimate.max;
-    ultimateRow = row(isMax ? 'done' : 'partial', ultimate.name, isMax ? roman(ultimate.level) : `${roman(ultimate.level)} → ${roman(ultimate.max)}`);
+    ultimateRow = row(isMax ? 'done' : 'partial', ultimate.name, isMax ? roman(ultimate.level) : `${roman(ultimate.level)} → ${roman(ultimate.max)}`, withCoins(undefined, ultimate.coins));
   } else if (ultimateOptions.length) {
     const choices = ultimateOptions.map((o) => `${o.name} ${roman(o.max)}`).join(', ');
     const warning = ultimateOptions.some((o) => o.id === 'ultimate_one_for_all') ? ' One For All removes every other enchant.' : '';
-    ultimateRow = row('todo', 'No ultimate enchant', 'Pick one', `${choices}.${warning}`);
+    const cheapest = cheapestUltimate ? ` Cheapest is ${cheapestUltimate.name} ${roman(cheapestUltimate.max)}, about ${formatCoins(cheapestUltimate.coins)}.` : '';
+    ultimateRow = row('todo', 'No ultimate enchant', 'Pick one', `${choices}.${warning}${cheapest}`);
   }
 
   const leftCount = ultimateLeft + upgrade.length + missing.length + pickOne.length;
@@ -139,13 +149,15 @@ function enchantSection(enchants) {
     leftCount,
     oneForAll && h('p', { class: 'callout' }, "One For All is on this weapon, and it replaces every other enchant, so there's nothing else to add."),
     group('Ultimate', ultimateRow ? [ultimateRow] : []),
-    group('Not maxed yet', upgrade.map((e) => row('partial', e.name, `${roman(e.level)} → ${roman(e.max)}`, e.note))),
-    group('Missing', missing.map((e) => row('todo', e.name, `Add ${roman(e.max)}`, e.note))),
+    group('Not maxed yet', upgrade.map((e) => row('partial', e.name, `${roman(e.level)} → ${roman(e.max)}`, withCoins(e.note, e.coins)))),
+    group('Missing', missing.map((e) => row('todo', e.name, `Add ${roman(e.max)}`, withCoins(e.note, e.coins)))),
     group(
       'Missing, pick one of each',
-      pickOne.map((choice) => row('todo', choice.options.map((o) => o.name).join(' or '), `Add ${roman(Math.max(...choice.options.map((o) => o.max)))}`)),
+      pickOne.map((choice) =>
+        row('todo', choice.options.map((o) => o.name).join(' or '), `Add ${roman(Math.max(...choice.options.map((o) => o.max)))}`, withCoins(undefined, choice.coins, 'Cheapest is about')),
+      ),
     ),
-    group('Skippable', skippable.map((e) => row('skip', e.name, e.level ? `${roman(e.level)} → ${roman(e.max)}` : `Add ${roman(e.max)}`, e.note))),
+    group('Not required', skippable.map((e) => row('skip', e.name, e.level ? `${roman(e.level)} → ${roman(e.max)}` : `Add ${roman(e.max)}`, e.note))),
     maxed.length > 0 &&
       h(
         'details',
@@ -159,7 +171,24 @@ function enchantSection(enchants) {
 }
 
 function statusRows(rows) {
-  return rows.map((r) => row(r.optional && r.status !== 'done' ? 'skip' : r.status, r.label, r.value, r.note));
+  return rows.map((r) => row(r.optional && r.status !== 'done' ? 'skip' : r.status, r.label, r.value, withCoins(r.note, r.coins)));
+}
+
+function costSection({ cost }) {
+  if (!cost || (cost.total === 0 && !cost.unpriced.length)) return null;
+  const parts = [
+    ['Enchantments', cost.enchants],
+    ['Books and upgrades', cost.upgrades],
+    ['Gemstones', cost.gems],
+  ].filter(([, coins]) => coins > 0);
+  return h(
+    'section',
+    { class: 'panel' },
+    h('h3', {}, 'Estimated cost to max', h('span', { class: 'cost-total' }, formatCoins(cost.total))),
+    h('p', { class: 'muted section-intro' }, 'Uses current Bazaar and auction prices, and the cheapest option wherever you have a choice.'),
+    group(null, parts.map(([label, coins]) => row('pick', label, coinFormat.format(coins)))),
+    cost.unpriced.length > 0 && h('p', { class: 'muted' }, `Not included, because there's no market price: ${cost.unpriced.join(', ')}.`),
+  );
 }
 
 function reforgeSection({ reforge }) {
@@ -180,7 +209,7 @@ function reforgeSection({ reforge }) {
           pick.isCurrent ? 'done' : 'pick',
           pick.isCurrent ? `${pick.name} (yours)` : pick.name,
           `${pick.share}%`,
-          [pick.source, pick.stats, pick.ability].filter(Boolean).join('. '),
+          [pick.coins > 0 ? `${pick.source}, about ${formatCoins(pick.coins)}` : pick.source, pick.stats, pick.ability].filter(Boolean).join('. '),
         ),
       ),
     ),
@@ -188,9 +217,10 @@ function reforgeSection({ reforge }) {
 }
 
 function weaponDetail(weapon) {
-  const { progress, upgrades, gems } = weapon;
+  const { progress, upgrades, gems, cost } = weapon;
   const pending = (rows) => rows.filter((r) => !r.optional && r.status !== 'done').length;
   const isMaxed = progress.left === 0;
+  const headline = [`${progress.percent}% maxed`, cost?.total > 0 && `about ${formatCoins(cost.total)} to max`].filter(Boolean).join(' · ');
 
   return h(
     'article',
@@ -204,7 +234,7 @@ function weaponDetail(weapon) {
         'p',
         { class: 'summary' },
         h('strong', {}, isMaxed ? 'Fully maxed' : `${plural(progress.left, 'thing')} left`),
-        h('span', { class: 'muted' }, `${progress.percent}% maxed`),
+        h('span', { class: 'muted' }, headline),
       ),
       bar(progress.percent, `${plainText(weapon.name)} is ${progress.percent}% maxed`),
     ),
@@ -214,6 +244,7 @@ function weaponDetail(weapon) {
       h(
         'div',
         { class: 'checklist' },
+        costSection(weapon),
         enchantSection(weapon.enchants),
         section('Books and upgrades', pending(upgrades), group(null, statusRows(upgrades))),
         reforgeSection(weapon),

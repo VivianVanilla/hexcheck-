@@ -9,6 +9,9 @@ It looks through the inventory, ender chest, backpacks and personal vault, then 
 - **Books and upgrades:** Potato Books, Recombobulator, Art of War, reforge, stars, Master Stars, Wither scrolls, Power Scroll, Transmission Tuners, Etherwarp
 - **Reforge suggestions:** what players use on upgraded copies of that weapon on the auction house, with each reforge's stats at the item's rarity and where to get it
 - **Gemstones:** every slot, including locked ones and what they cost to unlock
+- **Estimated cost to max:** a coin total, plus the price of each thing left to do
+
+The percentage counts each step as done or not, except that an enchant one level short of max counts for half. Knockback and Punch aren't required, so they never change the score.
 
 ## Deploy to Vercel
 
@@ -23,6 +26,7 @@ After that, every push to `main` redeploys the site automatically.
 - **The page** (`public/`) is plain static files. It never sees the key.
 - **The function** (`api/weapons.js`) holds the key, asks Hypixel about the player, and sends back the finished results. Vercel's CDN answers repeat searches for the same player for a couple of minutes, so they don't use up the key's rate limit. The page shows when its data is from.
 - **Enchant and item data** is downloaded by the function and kept for up to 6 hours, so new enchants and weapons show up without changing the code once the sources add them.
+- **Prices** are downloaded by the function and kept for up to 10 minutes. It uses Hypixel's live Bazaar buy price wherever an item is sold there, and SkyHelper's auction prices for everything else.
 - **Reforge usage** (`data/reforge-usage.json`) is saved in the repo, because scanning every auction page takes too long to do during a search. An Action refreshes it on the first of each month, and the push redeploys the site. To refresh sooner, open the **Actions** tab, pick **Refresh reforge data**, and click **Run workflow**.
 
 ## Good to know
@@ -32,6 +36,7 @@ After that, every push to `main` redeploys the site automatically.
 - Hypixel's rules say not to rely on developer keys long term. For a site that stays up, apply for a Personal application on the [developer dashboard](https://developer.hypixel.net/). Everyone using the site shares that key's rate limit, and searches stop working if it expires until you replace it.
 - Vercel's free Hobby plan is for non-commercial use, so ads or payments would mean upgrading.
 - Reforge suggestions show what's popular, not a calculated best, and they don't affect the score. Any reforge counts as done because the best choice depends on your build.
+- Coin totals are an estimate. They use the cheapest option wherever there's a choice, like which ultimate enchant or which gem to add, so maxing with pricier picks costs more. Anything with no market price is listed and left out of the total. Enchants that only come from the enchanting table cost XP rather than coins, so they count as free.
 - Enchant lists are by weapon type, so a few may not fit one specific weapon.
 
 ## Where the data comes from
@@ -39,6 +44,7 @@ After that, every push to `main` redeploys the site automatically.
 - [Hypixel API](https://api.hypixel.net/): player inventories, item stars and gem slots, and auction listings
 - [NotEnoughUpdates repo](https://github.com/NotEnoughUpdates/NotEnoughUpdates-REPO): which enchants fit which weapons, which conflict, and reforge stats
 - [SkyHanni repo](https://github.com/hannibal002/SkyHanni-REPO): enchant names and max levels
+- [SkyHelper prices](https://github.com/SkyHelperBot/Prices): auction prices for items that aren't on the Bazaar
 
 ## Commands
 

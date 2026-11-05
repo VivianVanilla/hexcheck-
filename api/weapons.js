@@ -15,7 +15,10 @@ const GAME_DATA_URLS = {
   basic: `${NEU_REPO}/reforges.json`,
   skyhanni: 'https://raw.githubusercontent.com/hannibal002/SkyHanni-REPO/main/constants/Enchants.json',
 };
+const BAZAAR_URL = 'https://api.hypixel.net/v2/skyblock/bazaar';
+const AUCTION_PRICES_URL = 'https://raw.githubusercontent.com/SkyHelperBot/Prices/main/pricesV2.json';
 const GAME_DATA_TTL = 6 * 60 * 60 * 1000;
+const PRICES_TTL = 10 * 60 * 1000;
 const REQUEST_TIMEOUT = 15 * 1000;
 const USERNAME = /^[A-Za-z0-9_]{1,16}$/;
 
@@ -35,38 +38,63 @@ class ApiError extends Error {
 
 const timedFetch = (url, options = {}) => fetch(url, { ...options, signal: AbortSignal.timeout(REQUEST_TIMEOUT) });
 
-let gameData = null;
-let gameDataAt = 0;
-let gameDataLoading = null;
+async function fetchJson(url) {
+  const response = await timedFetch(url);
+  if (!response.ok) throw new Error(`${url} returned ${response.status}`);
+  return response.json();
+}
 
 async function loadGameData() {
-  const entries = await Promise.all(
-    Object.entries(GAME_DATA_URLS).map(async ([name, url]) => {
-      const response = await timedFetch(url);
-      if (!response.ok) throw new Error(`${url} returned ${response.status}`);
-      return [name, await response.json()];
-    }),
-  );
+  const entries = await Promise.all(Object.entries(GAME_DATA_URLS).map(async ([name, url]) => [name, await fetchJson(url)]));
   const { items, neu, skyhanni, stones, basic } = Object.fromEntries(entries);
   return buildGameData(items, neu, skyhanni, { stones, basic, usage: reforgeUsage });
 }
 
-/** Kept in memory while Vercel keeps this function warm, so most searches skip the downloads. */
-async function getGameData() {
-  if (gameData && Date.now() - gameDataAt < GAME_DATA_TTL) return gameData;
-  gameDataLoading ??= loadGameData().finally(() => {
-    gameDataLoading = null;
-  });
-  try {
-    gameData = await gameDataLoading;
-    gameDataAt = Date.now();
-    return gameData;
-  } catch (error) {
-    console.error('Could not refresh game data:', error.message);
-    if (gameData) return gameData; // A slightly old enchant list beats no answer.
-    throw new ApiError(502, 'data_down', "Couldn't load the enchantment and item data. Try again in a moment.");
+/**
+ * Hypixel's live Bazaar buy price wherever an item is sold there. Anything else, like
+ * Power Scrolls, falls back to SkyHelper's auction prices.
+ */
+async function loadPrices() {
+  const [bazaar, auctions] = await Promise.allSettled([fetchJson(BAZAAR_URL), fetchJson(AUCTION_PRICES_URL)]);
+  if (bazaar.status === 'rejected' && auctions.status === 'rejected') throw bazaar.reason;
+
+  const prices = new Map(auctions.status === 'fulfilled' ? Object.entries(auctions.value) : []);
+  if (bazaar.status === 'fulfilled') {
+    for (const [id, product] of Object.entries(bazaar.value.products ?? {})) {
+      const buyPrice = product.quick_status?.buyPrice;
+      if (buyPrice > 0) prices.set(id, buyPrice);
+    }
   }
+  return prices;
 }
+
+/**
+ * Keeps a download in memory while Vercel keeps this function warm, so most searches skip it.
+ * If a refresh fails, the last good copy is used: slightly old data beats no answer.
+ */
+function keepFresh(load, ttl) {
+  let value = null;
+  let loadedAt = 0;
+  let loading = null;
+  return async () => {
+    if (value && Date.now() - loadedAt < ttl) return value;
+    loading ??= load().finally(() => {
+      loading = null;
+    });
+    try {
+      value = await loading;
+      loadedAt = Date.now();
+      return value;
+    } catch (error) {
+      console.error(`${load.name} failed:`, error.message);
+      if (value) return value;
+      throw error;
+    }
+  };
+}
+
+const getGameData = keepFresh(loadGameData, GAME_DATA_TTL);
+const getPrices = keepFresh(loadPrices, PRICES_TTL);
 
 async function lookupPlayer(name) {
   const notFound = () => new ApiError(404, 'player_not_found', `No Minecraft player is called "${name}".`);
@@ -123,7 +151,14 @@ async function fetchProfiles(uuid) {
 
 async function buildResult(name) {
   const player = await lookupPlayer(name);
-  const [profiles, game] = await Promise.all([fetchProfiles(player.uuid), getGameData()]);
+  const [profiles, game, prices] = await Promise.all([
+    fetchProfiles(player.uuid),
+    getGameData().catch(() => {
+      throw new ApiError(502, 'data_down', "Couldn't load the enchantment and item data. Try again in a moment.");
+    }),
+    // Without prices the site still works, it just leaves out the coin estimates.
+    getPrices().catch(() => null),
+  ]);
 
   // People who left a co-op stay listed on it, marked with a deletion notice.
   const usable = profiles.filter((p) => p.members?.[player.uuid] && !p.members[player.uuid].profile?.deletion_notice);
@@ -138,7 +173,7 @@ async function buildResult(name) {
       name: p.cute_name,
       mode: p.game_mode ?? null,
       selected: Boolean(p.selected),
-      ...analyzeMember(p.members[player.uuid], game),
+      ...analyzeMember(p.members[player.uuid], game, prices),
     })),
   };
 }

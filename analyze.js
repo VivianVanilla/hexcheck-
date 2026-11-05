@@ -10,7 +10,11 @@ const NECRON_BLADES = new Set(['NECRON_BLADE', 'HYPERION', 'ASTRAEA', 'SCYLLA', 
 const WITHER_SCROLLS = ['IMPLOSION_SCROLL', 'SHADOW_WARP_SCROLL', 'WITHER_SHIELD_SCROLL'];
 const MASTER_STARS = ['First', 'Second', 'Third', 'Fourth', 'Fifth'];
 const NO_RECOMB_TIERS = new Set(['SPECIAL', 'VERY_SPECIAL', 'UNOBTAINABLE']);
-const SKIPPABLE = { knockback: 'Most players leave this off' };
+// Not required to count as maxed. They never change the score, whether they're on the weapon or not.
+const SKIPPABLE = {
+  knockback: 'Most players leave this off',
+  punch: 'It only adds arrow knockback',
+};
 // NEU's lists are slightly too generous: these books' own "Applied To" text leaves out these weapon types.
 const NOT_APPLIED_TO = {
   BOW: ['ultimate_chimera'],
@@ -28,6 +32,24 @@ const MIN_PICK_SHARE = 10;
 const MAGE_ABILITY_SCALING = 0.2;
 const PERCENT_STATS = new Set(['crit_chance', 'crit_damage', 'attack_speed', 'ability_damage']);
 const RARITY_PATTERN = /\b(VERY SPECIAL|SPECIAL|UNCOMMON|COMMON|RARE|EPIC|LEGENDARY|MYTHIC|DIVINE|ULTIMATE)\b/;
+// An enchant one level short of max earns this much of a finished step towards the percentage.
+const ONE_LEVEL_SHORT_CREDIT = 0.5;
+// The top level of these isn't a book: it's the level below plus one of these items.
+const ENCHANT_UPGRADE_ITEMS = {
+  bane_of_arthropods: 'ENSNARED_SNAIL',
+  ender_slayer: 'ENDSTONE_IDOL',
+  scavenger: 'GOLDEN_BOUNTY',
+  smite: 'SEVERED_HAND',
+  venomous: 'FATEFUL_STINGER',
+};
+// These only come from the enchanting table, which costs XP rather than coins.
+const TABLE_ONLY_ENCHANTS = new Set(['aiming', 'flame', 'impaling', 'knockback', 'piercing', 'punch', 'silk_touch', 'smelting_touch']);
+const POWER_SCROLLS = ['AMBER', 'AMETHYST', 'JADE', 'JASPER', 'OPAL', 'RUBY', 'SAPPHIRE', 'TOPAZ'].map((gem) => `${gem}_POWER_SCROLL`);
+// Slots that take more than one kind of gem, going by what real items have in them.
+const UNIVERSAL_SLOT_GEMS = {
+  COMBAT: ['AMETHYST', 'JASPER', 'ONYX', 'OPAL', 'RUBY', 'SAPPHIRE'],
+  DEFENSIVE: ['AMETHYST', 'OPAL', 'RUBY'],
+};
 
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
 const whole = new Intl.NumberFormat('en-US');
@@ -44,6 +66,40 @@ const titleCase = (id) =>
     .join(' ');
 const isUltimate = (id) => id.startsWith('ultimate_');
 const byName = (a, b) => a.name.localeCompare(b.name);
+
+/**
+ * What a shopping list costs. Each entry is { id, amount } or { coins }. Gives null if
+ * something on the list has no known price, and undefined if there are no prices at all.
+ */
+function priceOf(needs, prices) {
+  if (!prices) return undefined;
+  let total = 0;
+  for (const { id, amount = 1, coins } of needs) {
+    if (coins !== undefined) {
+      total += coins;
+    } else if (amount > 0) {
+      const price = prices.get(id);
+      if (!price) return null;
+      total += price * amount;
+    }
+  }
+  return Math.round(total);
+}
+
+/** The cheapest of several prices, ignoring any with no known price. */
+function lowest(costs) {
+  if (costs.includes(undefined)) return undefined;
+  const known = costs.filter((coins) => coins !== null);
+  return known.length ? Math.min(...known) : null;
+}
+
+/** Turns Hypixel's star and gem slot costs into a shopping list. */
+const costNeeds = (costs) =>
+  costs.map((cost) => {
+    if (cost.type === 'COINS') return { coins: cost.coins };
+    if (cost.type === 'ESSENCE') return { id: `ESSENCE_${cost.essence_type}`, amount: cost.amount };
+    return { id: cost.item_id, amount: cost.amount };
+  });
 
 function parseNbt(buffer) {
   let pos = 0;
@@ -177,6 +233,7 @@ function buildGameData(items, neu, skyhanni, { stones = {}, basic = {}, usage = 
       types: entry.itemTypes,
       stats: entry.reforgeStats,
       ability: entry.reforgeAbility,
+      costs: entry.reforgeCosts,
     });
   };
   for (const entry of Object.values(basic)) addReforge(entry, null);
@@ -244,7 +301,7 @@ function fitsWeapon(reforge, id) {
   return !locked || locked.includes(id) || locked.includes(baseWeaponId(id));
 }
 
-function suggestReforges(extra, apiItem, lore, game) {
+function suggestReforges(extra, apiItem, lore, game, prices) {
   const usage = game.reforgeUsage;
   if (!usage) return null;
 
@@ -274,6 +331,8 @@ function suggestReforges(extra, apiItem, lore, game) {
         stats: formatReforgeStats(reforge?.stats?.[rarity]),
         ability: ability ? cleanText(ability) : undefined,
         isCurrent: id === current,
+        // The stone plus the fee to apply it. Blacksmith rolls cost so little they aren't priced.
+        coins: reforge?.stone ? priceOf([{ id: reforge.stone }, { coins: reforge.costs?.[rarity] ?? 0 }], prices) : undefined,
       };
     });
   return picks.length ? { basedOn: exact ? 'weapon' : 'group', count, picks } : null;
@@ -289,13 +348,45 @@ function stackNote(info, extra) {
   return 'Levels up with use';
 }
 
-function analyzeEnchants(extra, category, game) {
+const book = (id, level) => ({ id: `ENCHANTMENT_${id.toUpperCase()}_${level}` });
+
+/** Every way to take an enchant from its current level (0 if it's missing) to max, as shopping lists. */
+function waysToMax(id, level, max, game) {
+  if (TABLE_ONLY_ENCHANTS.has(id)) return [[]];
+  if (game.enchants.get(id).stackLevels) return [level > 0 ? [] : [book(id, 1)]]; // These level up with use.
+
+  const upgradeItem = ENCHANT_UPGRADE_ITEMS[id];
+  if (upgradeItem) return [[...(level < max - 1 ? [book(id, max - 1)] : []), { id: upgradeItem }]];
+
+  const ways = [[book(id, max)]];
+  // Two ultimate books of one level combine into the next, so the level already on the weapon
+  // counts. Other enchants don't work like that: a Sharpness VII book costs far more than two VIs.
+  if (isUltimate(id) && level > 0) {
+    const steps = [];
+    for (let step = level; step < max; step++) steps.push(book(id, step));
+    ways.push(steps);
+  }
+  return ways;
+}
+
+const enchantCoins = (id, level, max, game, prices) => lowest(waysToMax(id, level, max, game).map((needs) => priceOf(needs, prices)));
+
+function enchantNote(id, info, extra, game) {
+  if (SKIPPABLE[id]) return SKIPPABLE[id];
+  if (info.stackLevels) return stackNote(info, extra);
+  if (TABLE_ONLY_ENCHANTS.has(id)) return 'From the enchanting table, which costs XP instead of coins';
+  const upgradeItem = ENCHANT_UPGRADE_ITEMS[id];
+  return upgradeItem ? `Last level uses ${game.items.get(upgradeItem)?.name ?? titleCase(upgradeItem)}` : undefined;
+}
+
+function analyzeEnchants(extra, category, game, prices) {
   const applied = new Map(
     Object.entries(extra.enchantments ?? {}).map(([id, level]) => [game.canon(id), num(level)]),
   );
   const result = {
     ultimate: null,
     ultimateOptions: [],
+    cheapestUltimate: null,
     upgrade: [],
     missing: [],
     pickOne: [],
@@ -313,6 +404,7 @@ function analyzeEnchants(extra, category, game) {
         name: info?.name ?? titleCase(id.replace('ultimate_', '')),
         level,
         max: info?.max ?? null,
+        coins: info && level < info.max ? enchantCoins(id, level, info.max, game, prices) : undefined,
       };
     } else if (!info) {
       // Removed or brand new enchants: we can show them but cannot judge them.
@@ -320,20 +412,25 @@ function analyzeEnchants(extra, category, game) {
     } else if (level >= info.max) {
       result.maxed.push({ id, name: info.name, level });
     } else {
-      const entry = { id, name: info.name, level, max: info.max, note: SKIPPABLE[id] ?? stackNote(info, extra) };
-      (SKIPPABLE[id] ? result.skippable : result.upgrade).push(entry);
+      const entry = { id, name: info.name, level, max: info.max, note: enchantNote(id, info, extra, game) };
+      if (SKIPPABLE[id]) result.skippable.push(entry);
+      else result.upgrade.push({ ...entry, coins: enchantCoins(id, level, info.max, game, prices) });
     }
   }
 
   const list = game.lists[category] ?? [];
   const available = (id) => {
     const info = game.enchants.get(id);
-    return { id, name: info.name, max: info.max, note: SKIPPABLE[id] ?? stackNote(info, extra) };
+    const coins = SKIPPABLE[id] ? undefined : enchantCoins(id, 0, info.max, game, prices);
+    return { id, name: info.name, max: info.max, note: enchantNote(id, info, extra, game), coins };
   };
 
   if (!result.ultimate) {
     // Not filtered by conflicts: One For All replaces whatever is already on the weapon.
     result.ultimateOptions = list.filter(isUltimate).map(available).sort(byName);
+    // It isn't a fair price to quote though, since it wipes every other enchant.
+    const fairOptions = result.ultimateOptions.filter((option) => option.id !== 'ultimate_one_for_all' && typeof option.coins === 'number');
+    result.cheapestUltimate = fairOptions.reduce((best, option) => (!best || option.coins < best.coins ? option : best), null);
   }
 
   if (!result.oneForAll) {
@@ -344,7 +441,8 @@ function analyzeEnchants(extra, category, game) {
       if (pool.some(isUltimate)) continue;
       const options = pool.filter((id) => open.has(id));
       if (options.length > 1) {
-        result.pickOne.push({ options: options.map(available).sort(byName) });
+        const choices = options.map(available).sort(byName);
+        result.pickOne.push({ options: choices, coins: lowest(choices.map((choice) => choice.coins)) });
         options.forEach((id) => open.delete(id));
       }
     }
@@ -373,9 +471,12 @@ function reforgeName(extra, apiItem, name) {
   return prefix || titleCase(extra.modifier.replace(/_(bow|sword)$/, ''));
 }
 
-function analyzeUpgrades(extra, apiItem, lore, name, reforge, game) {
+function analyzeUpgrades(extra, apiItem, lore, name, reforge, game, prices) {
   const rows = [];
-  const add = (label, status, value, note, optional = false) => rows.push({ label, status, value, note, optional });
+  const add = (label, status, value, note, { optional = false, needs, coins } = {}) => {
+    const priced = coins !== undefined ? coins : needs ? priceOf(needs, prices) : undefined;
+    rows.push({ label, status, value, note, optional, coins: status === 'done' ? undefined : priced });
+  };
   const applied = (value) => (value > 0 ? 'done' : 'todo');
   const loreText = plain(lore.join('\n'));
 
@@ -391,20 +492,26 @@ function analyzeUpgrades(extra, apiItem, lore, name, reforge, game) {
     potatoes >= POTATO_LIMIT ? 'done' : potatoes > 0 ? 'partial' : 'todo',
     `${potatoes} / ${POTATO_LIMIT}`,
     potatoNote,
+    {
+      needs: [
+        { id: 'HOT_POTATO_BOOK', amount: HOT_POTATO_LIMIT - potatoes },
+        { id: 'FUMING_POTATO_BOOK', amount: POTATO_LIMIT - Math.max(potatoes, HOT_POTATO_LIMIT) },
+      ],
+    },
   );
 
   if (!NO_RECOMB_TIERS.has(apiItem.tier)) {
     const recomb = num(extra.rarity_upgrades);
-    add('Recombobulator 3000', applied(recomb), recomb ? 'Applied' : 'Not applied');
+    add('Recombobulator 3000', applied(recomb), recomb ? 'Applied' : 'Not applied', undefined, { needs: [{ id: 'RECOMBOBULATOR_3000' }] });
   }
 
   const artOfWar = num(extra.art_of_war_count);
-  add('The Art of War', applied(artOfWar), artOfWar ? 'Applied' : 'Not applied');
+  add('The Art of War', applied(artOfWar), artOfWar ? 'Applied' : 'Not applied', undefined, { needs: [{ id: 'THE_ART_OF_WAR' }] });
 
   // Any reforge counts as done: the suggestions inform the choice, but only you know your build.
   const onAPick = reforge?.picks.some((pick) => pick.isCurrent);
   const reforgeNote = !reforge ? undefined : onAPick ? 'One of the most used' : `Most used: ${reforge.picks[0].name}`;
-  add('Reforge', extra.modifier ? 'done' : 'todo', extra.modifier ? reforgeName(extra, apiItem, name) : 'None', reforgeNote);
+  add('Reforge', extra.modifier ? 'done' : 'todo', extra.modifier ? reforgeName(extra, apiItem, name) : 'None', reforgeNote, { coins: reforge?.picks[0].coins });
 
   const stars = Math.max(num(extra.dungeon_item_level), num(extra.upgrade_level));
   const starCosts = apiItem.upgrade_costs ?? [];
@@ -419,6 +526,12 @@ function analyzeUpgrades(extra, apiItem, lore, name, reforge, game) {
       have >= starCosts.length ? 'done' : have > 0 ? 'partial' : 'todo',
       `${have} / ${starCosts.length}`,
       remaining ? `${convertNote}Needs ${remaining}` : undefined,
+      {
+        needs: [
+          ...costNeeds(starCosts.slice(have).flat()),
+          ...(needsConverting ? [{ id: `ESSENCE_${convert.essence_type}`, amount: convert.amount }] : []),
+        ],
+      },
     );
 
     // Master Stars only go on 5-star dungeon items; 10-star Crimson gear has its own costs above.
@@ -430,6 +543,7 @@ function analyzeUpgrades(extra, apiItem, lore, name, reforge, game) {
         master >= MASTER_STARS.length ? 'done' : master > 0 ? 'partial' : 'todo',
         `${master} / ${MASTER_STARS.length}`,
         next.length ? `Needs ${next.join(', ')}` : undefined,
+        { needs: next.map((star) => ({ id: `${star.toUpperCase()}_MASTER_STAR` })) },
       );
     }
   }
@@ -437,12 +551,13 @@ function analyzeUpgrades(extra, apiItem, lore, name, reforge, game) {
   if (NECRON_BLADES.has(extra.id)) {
     const scrolls = extra.ability_scroll ?? [];
     const owned = scrolls.includes('ULTIMATE_WITHER_SCROLL') ? WITHER_SCROLLS : WITHER_SCROLLS.filter((id) => scrolls.includes(id));
-    const lacking = WITHER_SCROLLS.filter((id) => !owned.includes(id)).map((id) => game.items.get(id)?.name ?? titleCase(id));
+    const lacking = WITHER_SCROLLS.filter((id) => !owned.includes(id));
     add(
       'Wither Scrolls',
       lacking.length === 0 ? 'done' : owned.length ? 'partial' : 'todo',
       `${owned.length} / ${WITHER_SCROLLS.length}`,
-      lacking.length ? `Needs ${lacking.join(', ')}` : undefined,
+      lacking.length ? `Needs ${lacking.map((id) => game.items.get(id)?.name ?? titleCase(id)).join(', ')}` : undefined,
+      { needs: lacking.map((id) => ({ id })) },
     );
   }
 
@@ -453,29 +568,38 @@ function analyzeUpgrades(extra, apiItem, lore, name, reforge, game) {
       scroll ? 'done' : 'todo',
       scroll ? (game.items.get(scroll)?.name ?? titleCase(scroll)).replace(' Power Scroll', '') : 'None',
       scroll ? undefined : 'Any one of them, for its right-click buff',
+      { coins: lowest(POWER_SCROLLS.map((id) => priceOf([{ id }], prices))) },
     );
   }
 
   if (/Ability:.*Transmission/.test(loreText) || extra.tuned_transmission !== undefined) {
     const tuners = num(extra.tuned_transmission);
-    add('Transmission Tuners', tuners >= TUNER_LIMIT ? 'done' : tuners > 0 ? 'partial' : 'todo', `${tuners} / ${TUNER_LIMIT}`);
+    add('Transmission Tuners', tuners >= TUNER_LIMIT ? 'done' : tuners > 0 ? 'partial' : 'todo', `${tuners} / ${TUNER_LIMIT}`, undefined, {
+      needs: [{ id: 'TRANSMISSION_TUNER', amount: TUNER_LIMIT - tuners }],
+    });
   }
 
   if (extra.id === 'ASPECT_OF_THE_VOID') {
     const merged = num(extra.ethermerge);
-    add('Etherwarp', applied(merged), merged ? 'Applied' : 'Not applied', merged ? undefined : 'Etherwarp Conduit, needs Enderman Slayer 7');
+    add('Etherwarp', applied(merged), merged ? 'Applied' : 'Not applied', merged ? undefined : 'Etherwarp Conduit, needs Enderman Slayer 7', {
+      needs: [{ id: 'ETHERWARP_CONDUIT' }],
+    });
   }
 
   const hasStatsBook = extra.stats_book !== undefined;
-  add('Book of Stats', applied(hasStatsBook ? 1 : 0), hasStatsBook ? `${whole.format(num(extra.stats_book))} kills` : 'Not applied', 'Cosmetic, only tracks kills', true);
+  add('Book of Stats', applied(hasStatsBook ? 1 : 0), hasStatsBook ? `${whole.format(num(extra.stats_book))} kills` : 'Not applied', 'Cosmetic, only tracks kills', { optional: true });
 
   return rows;
 }
 
-function analyzeGems(extra, apiItem, game) {
+function analyzeGems(extra, apiItem, game, prices) {
   const gems = { ...(extra.gems ?? {}) };
   const unlocked = [...(gems.unlocked_slots ?? [])];
   delete gems.unlocked_slots;
+
+  /** The cheapest Perfect gem a slot accepts, plus anything else that's needed first. */
+  const perfectGemCoins = (slotType, firstNeeds = []) =>
+    lowest((UNIVERSAL_SLOT_GEMS[slotType] ?? [slotType]).map((gem) => priceOf([...firstNeeds, { id: `PERFECT_${gem}_GEM` }], prices)));
 
   // Slots are matched by type rather than by index, because Hypixel does not
   // guarantee the numbers line up with the order in the item list.
@@ -498,6 +622,7 @@ function analyzeGems(extra, apiItem, game) {
         status: perfect ? 'done' : 'partial',
         value: `${titleCase(quality)} ${titleCase(type)}`,
         note: perfect ? undefined : `Replace with Perfect ${titleCase(type)}`,
+        coins: perfect ? undefined : perfectGemCoins(type),
       };
     }
 
@@ -505,24 +630,31 @@ function analyzeGems(extra, apiItem, game) {
     const unlockedIndex = unlocked.findIndex((k) => k.startsWith(prefix));
     if (free || unlockedIndex !== -1) {
       if (!free) unlocked.splice(unlockedIndex, 1);
-      return { label, status: 'todo', value: 'Empty', note: 'Add a Perfect gem' };
+      return { label, status: 'todo', value: 'Empty', note: 'Add a Perfect gem', coins: perfectGemCoins(slot.slot_type) };
     }
     return {
       label,
       status: 'todo',
       value: 'Locked',
       note: `Unlock for ${summarizeCosts(slot.costs, game)}, then add a Perfect gem`,
+      coins: perfectGemCoins(slot.slot_type, costNeeds(slot.costs)),
     };
   });
 }
 
 function summarize(enchants, upgrades, gems) {
-  let done = enchants.maxed.length;
+  const isOneLevelShort = (enchant) => enchant.level === enchant.max - 1;
+  let done = enchants.maxed.filter((enchant) => !SKIPPABLE[enchant.id]).length;
   let left = enchants.upgrade.length + enchants.missing.length + enchants.pickOne.length;
+  let oneLevelShort = enchants.upgrade.filter(isOneLevelShort).length;
   if (enchants.ultimate) {
     const { level, max } = enchants.ultimate;
-    if (max === null || level >= max) done += 1;
-    else left += 1;
+    if (max === null || level >= max) {
+      done += 1;
+    } else {
+      left += 1;
+      if (isOneLevelShort(enchants.ultimate)) oneLevelShort += 1;
+    }
   } else if (enchants.ultimateOptions.length) {
     left += 1;
   }
@@ -532,11 +664,43 @@ function summarize(enchants, upgrades, gems) {
     else left += 1;
   }
   const total = done + left;
+  const earned = done + oneLevelShort * ONE_LEVEL_SHORT_CREDIT;
   // Rounded down so a weapon only ever reads 100% when nothing is left.
-  return { done, left, total, percent: total ? Math.floor((done / total) * 100) : 100 };
+  return { done, left, total, percent: total ? Math.floor((earned / total) * 100) : 100 };
 }
 
-function analyzeWeapon(item, source, game) {
+/** Adds up what each to-do item costs, grouped the way the page shows them. */
+function summarizeCost(enchants, upgrades, gems, prices) {
+  if (!prices) return null;
+  const unpriced = [];
+  const sum = (entries) =>
+    entries.reduce((total, { label, coins }) => {
+      if (coins === null) unpriced.push(label);
+      return total + (coins ?? 0);
+    }, 0);
+
+  const { ultimate, ultimateOptions, cheapestUltimate } = enchants;
+  const enchantEntries = [
+    ...enchants.upgrade.map(({ name, coins }) => ({ label: name, coins })),
+    ...enchants.missing.map(({ name, coins }) => ({ label: name, coins })),
+    ...enchants.pickOne.map(({ options, coins }) => ({ label: options.map((option) => option.name).join(' or '), coins })),
+  ];
+  if (ultimate) enchantEntries.push({ label: ultimate.name, coins: ultimate.coins });
+  else if (ultimateOptions.length) enchantEntries.push({ label: 'Ultimate enchant', coins: cheapestUltimate?.coins ?? null });
+
+  const enchantCoinsTotal = sum(enchantEntries);
+  const upgradeCoinsTotal = sum(upgrades);
+  const gemCoinsTotal = sum(gems);
+  return {
+    total: enchantCoinsTotal + upgradeCoinsTotal + gemCoinsTotal,
+    enchants: enchantCoinsTotal,
+    upgrades: upgradeCoinsTotal,
+    gems: gemCoinsTotal,
+    unpriced,
+  };
+}
+
+function analyzeWeapon(item, source, game, prices = null) {
   const extra = item?.tag?.ExtraAttributes;
   const apiItem = extra?.id && game.items.get(extra.id);
   if (!apiItem || !WEAPON_CATEGORIES.has(apiItem.category)) return null;
@@ -544,15 +708,27 @@ function analyzeWeapon(item, source, game) {
   const { category } = apiItem;
   const lore = item.tag.display?.Lore ?? [];
   const name = item.tag.display?.Name ?? apiItem.name;
-  const enchants = analyzeEnchants(extra, category, game);
-  const reforge = suggestReforges(extra, apiItem, lore, game);
-  const upgrades = analyzeUpgrades(extra, apiItem, lore, name, reforge, game);
-  const gems = analyzeGems(extra, apiItem, game);
-  return { id: extra.id, name, lore, source, category, enchants, upgrades, gems, reforge, progress: summarize(enchants, upgrades, gems) };
+  const enchants = analyzeEnchants(extra, category, game, prices);
+  const reforge = suggestReforges(extra, apiItem, lore, game, prices);
+  const upgrades = analyzeUpgrades(extra, apiItem, lore, name, reforge, game, prices);
+  const gems = analyzeGems(extra, apiItem, game, prices);
+  return {
+    id: extra.id,
+    name,
+    lore,
+    source,
+    category,
+    enchants,
+    upgrades,
+    gems,
+    reforge,
+    progress: summarize(enchants, upgrades, gems),
+    cost: summarizeCost(enchants, upgrades, gems, prices),
+  };
 }
 
 /** Finds and scores every weapon a profile member owns. */
-function analyzeMember(member, game) {
+function analyzeMember(member, game, prices = null) {
   const inventory = member?.inventory;
   const sources = [
     ['Inventory', inventory?.inv_contents],
@@ -569,7 +745,7 @@ function analyzeMember(member, game) {
     if (!contents?.data) continue;
     try {
       for (const item of decodeItems(contents.data)) {
-        const weapon = analyzeWeapon(item, source, game);
+        const weapon = analyzeWeapon(item, source, game, prices);
         if (weapon) weapons.push(weapon);
       }
     } catch {
