@@ -1,0 +1,13 @@
+{
+  "name": "skyblock-hexcheck",
+  "version": "1.0.0",
+  "private": true,
+  "description": "See what's left to max any Hypixel SkyBlock weapon.",
+  "scripts": {
+    "start": "node server.js --open",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
