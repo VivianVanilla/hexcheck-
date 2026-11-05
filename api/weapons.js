@@ -108,7 +108,12 @@ async function fetchProfiles(uuid) {
     throw new ApiError(502, 'hypixel_down', "Couldn't reach Hypixel. Try again in a moment.");
   }
 
-  if (response.status === 403) throw new ApiError(503, 'bad_key', "Hypixel rejected this site's API key. It may have expired.");
+  if (response.status === 403) {
+    // Hypixel explains a bad key in JSON. Any other 403 is a firewall refusing this server,
+    // which replacing the key wouldn't fix, so the two need different messages.
+    if (body?.cause) throw new ApiError(503, 'bad_key', `Hypixel rejected this site's API key. It said: ${body.cause}.`);
+    throw new ApiError(502, 'hypixel_blocked', "Hypixel's firewall refused this server's request, so the API key isn't the problem. Try again later.");
+  }
   if (response.status === 429) throw new ApiError(429, 'rate_limited', 'Hypixel says too many requests. Wait a minute and try again.');
   if (!response.ok || !body?.success) {
     throw new ApiError(502, 'hypixel_error', `Hypixel returned an error: ${body?.cause ?? response.status}`);

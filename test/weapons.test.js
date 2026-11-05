@@ -175,9 +175,23 @@ test('a rejected key is explained, without repeating the key or caching it', asy
   const response = await get(freshFunction(t));
   const text = await response.text();
   assert.equal(response.status, 503);
-  assert.equal(JSON.parse(text).error, 'bad_key');
+  const body = JSON.parse(text);
+  assert.equal(body.error, 'bad_key');
+  assert.match(body.message, /Invalid API key/);
   assert.ok(!text.includes(KEY));
   assert.equal(response.headers.get('Cache-Control'), 'no-store');
+});
+
+test('a firewall 403 does not blame the key', async (t) => {
+  for (const reply of [() => new Response('<html>Access denied</html>', { status: 403 }), () => json({ success: false }, 403)]) {
+    fakeNetwork(t, { profiles: reply });
+    const response = await get(freshFunction(t));
+    const body = await response.json();
+    assert.equal(response.status, 502);
+    assert.equal(body.error, 'hypixel_blocked');
+    assert.match(body.message, /isn't the problem/);
+    assert.equal(response.headers.get('Cache-Control'), 'no-store');
+  }
 });
 
 test('a Hypixel rate limit is passed along, and not cached', async (t) => {

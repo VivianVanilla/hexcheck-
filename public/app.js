@@ -289,6 +289,7 @@ const ERROR_TITLES = {
   rate_limited: 'Slow down a little',
   no_key: 'Searches are down',
   bad_key: 'Searches are down',
+  hypixel_blocked: 'Searches are down',
 };
 
 function playerBar(player) {
