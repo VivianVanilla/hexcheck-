@@ -20,6 +20,14 @@ const HOT_POTATO_LIMIT = 10;
 const POTATO_LIMIT = 15;
 const TUNER_LIMIT = 4;
 const GEM_ORDER = ['ROUGH', 'FLAWED', 'FINE', 'FLAWLESS', 'PERFECT'];
+// Reforge suggestions: how many listings of one weapon we need before trusting them over
+// similar weapons, and how popular a reforge must be to get suggested.
+const MIN_USAGE_SAMPLE = 8;
+const MAX_REFORGE_PICKS = 3;
+const MIN_PICK_SHARE = 10;
+const MAGE_ABILITY_SCALING = 0.2;
+const PERCENT_STATS = new Set(['crit_chance', 'crit_damage', 'attack_speed', 'ability_damage']);
+const RARITY_PATTERN = /\b(VERY SPECIAL|SPECIAL|UNCOMMON|COMMON|RARE|EPIC|LEGENDARY|MYTHIC|DIVINE|ULTIMATE)\b/;
 
 const compact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
 const whole = new Intl.NumberFormat('en-US');
@@ -131,8 +139,11 @@ function decodeItems(base64) {
  *   items    - Hypixel's item list (category, stars, gemstone slots)
  *   neu      - NEU repo enchants.json (which enchants fit which weapon type, conflicts)
  *   skyhanni - SkyHanni repo Enchants.json (display names and true max levels)
+ * plus, for reforge suggestions:
+ *   stones, basic - NEU repo reforgestones.json and reforges.json (stats by rarity)
+ *   usage         - what upgraded weapons on the auction house use, see addReforgeUsage
  */
-function buildGameData(items, neu, skyhanni) {
+function buildGameData(items, neu, skyhanni, { stones = {}, basic = {}, usage = null } = {}) {
   const alias = { ultimate_duplex: 'ultimate_reiterate' };
   neu.enchant_mapping_id.forEach((from, i) => {
     alias[from.toLowerCase()] = neu.enchant_mapping_item[i].toLowerCase();
@@ -157,13 +168,115 @@ function buildGameData(items, neu, skyhanni) {
     lists[category] = [...new Set(ids.map(canon))].filter((id) => enchants.has(id) && !excluded.includes(id));
   }
 
+  // Reforges are stored on items by a modifier id, which only sometimes differs from the name.
+  const reforges = new Map();
+  const addReforge = (entry, stone) => {
+    reforges.set((entry.nbtModifier ?? entry.reforgeName).toLowerCase(), {
+      name: entry.reforgeName,
+      stone,
+      types: entry.itemTypes,
+      stats: entry.reforgeStats,
+      ability: entry.reforgeAbility,
+    });
+  };
+  for (const entry of Object.values(basic)) addReforge(entry, null);
+  for (const [id, entry] of Object.entries(stones)) addReforge(entry, entry.internalName ?? id);
+
   return {
     items: new Map(items.items.map((item) => [item.id, item])),
     enchants,
     lists,
     pools: neu.enchant_pools.map((pool) => pool.map(canon)),
     canon,
+    reforges,
+    reforgeUsage: usage,
   };
+}
+
+const baseWeaponId = (id) => id.replace(/^STARRED_/, '');
+
+function usageGroup(apiItem) {
+  if (apiItem.category !== 'SWORD') return apiItem.category;
+  return apiItem.ability_damage_scaling >= MAGE_ABILITY_SCALING ? 'MAGE_SWORD' : 'SWORD';
+}
+
+/**
+ * Counts one auction house item towards the reforge suggestions. Only weapons with real
+ * upgrades count, because freshly dropped ones just carry whatever reforge they rolled.
+ */
+function addReforgeUsage(usage, item, itemsById) {
+  const extra = item?.tag?.ExtraAttributes;
+  const apiItem = extra?.id && itemsById.get(extra.id);
+  if (!apiItem || !WEAPON_CATEGORIES.has(apiItem.category) || !extra.modifier) return;
+
+  const stars = Math.max(num(extra.dungeon_item_level), num(extra.upgrade_level));
+  const enchantCount = Object.keys(extra.enchantments ?? {}).length;
+  const upgraded = num(extra.hot_potato_count) >= HOT_POTATO_LIMIT || num(extra.rarity_upgrades) > 0 || (stars >= 5 && enchantCount >= 8);
+  if (!upgraded) return;
+
+  const modifier = extra.modifier.toLowerCase();
+  const tally = (buckets, key) => {
+    const bucket = (buckets[key] ??= { count: 0, reforges: {} });
+    bucket.count += 1;
+    bucket.reforges[modifier] = (bucket.reforges[modifier] ?? 0) + 1;
+  };
+  tally(usage.weapons, baseWeaponId(extra.id));
+  tally(usage.groups, usageGroup(apiItem));
+}
+
+// Reforge text carries colour codes and icons from the game's private font.
+const cleanText = (text) => plain(text).replace(/[\uE000-\uF8FF]/g, '').replace(/\s+/g, ' ').trim();
+
+function itemRarity(lore, apiItem) {
+  const line = lore.length ? plain(lore[lore.length - 1]) : '';
+  return line.match(RARITY_PATTERN)?.[1].replace(' ', '_') ?? apiItem.tier;
+}
+
+function formatReforgeStats(stats) {
+  return Object.entries(stats ?? {})
+    .map(([stat, value]) => `${value > 0 ? '+' : ''}${value}${PERCENT_STATS.has(stat) ? '%' : ''} ${titleCase(stat)}`)
+    .join(', ');
+}
+
+/** Item-locked stones like Gilded can't be borrowed from what similar weapons use. */
+function fitsWeapon(reforge, id) {
+  const locked = reforge?.types?.internalName;
+  return !locked || locked.includes(id) || locked.includes(baseWeaponId(id));
+}
+
+function suggestReforges(extra, apiItem, lore, game) {
+  const usage = game.reforgeUsage;
+  if (!usage) return null;
+
+  const own = usage.weapons[baseWeaponId(extra.id)];
+  const exact = own?.count >= MIN_USAGE_SAMPLE;
+  const bucket = exact ? own : usage.groups[usageGroup(apiItem)];
+  if (!bucket) return null;
+
+  const eligible = Object.entries(bucket.reforges).filter(([id]) => exact || fitsWeapon(game.reforges.get(id), extra.id));
+  const count = eligible.reduce((sum, [, uses]) => sum + uses, 0);
+  const rarity = itemRarity(lore, apiItem);
+  const current = extra.modifier?.toLowerCase();
+
+  const picks = eligible
+    .map(([id, uses]) => [id, Math.round((uses / count) * 100)])
+    .filter(([, share]) => share >= MIN_PICK_SHARE)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, MAX_REFORGE_PICKS)
+    .map(([id, share]) => {
+      const reforge = game.reforges.get(id);
+      const ability = typeof reforge?.ability === 'object' ? reforge.ability?.[rarity] : reforge?.ability;
+      return {
+        id,
+        name: reforge?.name ?? titleCase(id),
+        share,
+        source: reforge?.stone ? (game.items.get(reforge.stone)?.name ?? titleCase(reforge.stone)) : 'Blacksmith roll',
+        stats: formatReforgeStats(reforge?.stats?.[rarity]),
+        ability: ability ? cleanText(ability) : undefined,
+        isCurrent: id === current,
+      };
+    });
+  return picks.length ? { basedOn: exact ? 'weapon' : 'group', count, picks } : null;
 }
 
 function stackNote(info, extra) {
@@ -260,7 +373,7 @@ function reforgeName(extra, apiItem, name) {
   return prefix || titleCase(extra.modifier.replace(/_(bow|sword)$/, ''));
 }
 
-function analyzeUpgrades(extra, apiItem, lore, name, game) {
+function analyzeUpgrades(extra, apiItem, lore, name, reforge, game) {
   const rows = [];
   const add = (label, status, value, note, optional = false) => rows.push({ label, status, value, note, optional });
   const applied = (value) => (value > 0 ? 'done' : 'todo');
@@ -288,12 +401,10 @@ function analyzeUpgrades(extra, apiItem, lore, name, game) {
   const artOfWar = num(extra.art_of_war_count);
   add('The Art of War', applied(artOfWar), artOfWar ? 'Applied' : 'Not applied');
 
-  add(
-    'Reforge',
-    extra.modifier ? 'done' : 'todo',
-    extra.modifier ? reforgeName(extra, apiItem, name) : 'None',
-    extra.modifier ? 'The best one depends on your build' : undefined,
-  );
+  // Any reforge counts as done: the suggestions inform the choice, but only you know your build.
+  const onAPick = reforge?.picks.some((pick) => pick.isCurrent);
+  const reforgeNote = !reforge ? undefined : onAPick ? 'One of the most used' : `Most used: ${reforge.picks[0].name}`;
+  add('Reforge', extra.modifier ? 'done' : 'todo', extra.modifier ? reforgeName(extra, apiItem, name) : 'None', reforgeNote);
 
   const stars = Math.max(num(extra.dungeon_item_level), num(extra.upgrade_level));
   const starCosts = apiItem.upgrade_costs ?? [];
@@ -434,9 +545,10 @@ function analyzeWeapon(item, source, game) {
   const lore = item.tag.display?.Lore ?? [];
   const name = item.tag.display?.Name ?? apiItem.name;
   const enchants = analyzeEnchants(extra, category, game);
-  const upgrades = analyzeUpgrades(extra, apiItem, lore, name, game);
+  const reforge = suggestReforges(extra, apiItem, lore, game);
+  const upgrades = analyzeUpgrades(extra, apiItem, lore, name, reforge, game);
   const gems = analyzeGems(extra, apiItem, game);
-  return { id: extra.id, name, lore, source, category, enchants, upgrades, gems, progress: summarize(enchants, upgrades, gems) };
+  return { id: extra.id, name, lore, source, category, enchants, upgrades, gems, reforge, progress: summarize(enchants, upgrades, gems) };
 }
 
 /** Finds and scores every weapon a profile member owns. */
@@ -469,4 +581,4 @@ function analyzeMember(member, game) {
   return { inventoryOff: !inventory?.inv_contents?.data, weapons, unreadable };
 }
 
-module.exports = { parseNbt, decodeItems, buildGameData, analyzeWeapon, analyzeMember };
+module.exports = { parseNbt, decodeItems, buildGameData, addReforgeUsage, analyzeWeapon, analyzeMember };

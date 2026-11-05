@@ -5,13 +5,16 @@ const form = document.getElementById('search');
 const nameInput = document.getElementById('name');
 const statusLine = document.getElementById('status');
 
-const state = { data: null, selected: null, filter: '', requestId: 0 };
+const knownPlayers = document.getElementById('known-players');
+
+const state = { index: null, player: null, profileId: null, selected: 0, filter: '', requestId: 0 };
+const USERNAME = /^[A-Za-z0-9_]{1,16}$/;
 
 const MC_COLORS = {
   0: '#000000', 1: '#0000AA', 2: '#00AA00', 3: '#00AAAA', 4: '#AA0000', 5: '#AA00AA', 6: '#FFAA00', 7: '#AAAAAA',
   8: '#555555', 9: '#5555FF', a: '#55FF55', b: '#55FFFF', c: '#FF5555', d: '#FF55FF', e: '#FFFF55', f: '#FFFFFF',
 };
-const MARKS = { done: '✔', partial: '▲', todo: '+', skip: '–' };
+const MARKS = { done: '✔', partial: '▲', todo: '+', skip: '–', pick: '•' };
 
 /** All text goes in through append/textContent, so game data can never become HTML. */
 function h(tag, props = {}, ...children) {
@@ -32,7 +35,7 @@ const STAR_RUN = /([✪➊➋➌➍➎]+)/;
 // Hypixel draws stat icons with a private game font that browsers don't have. Left in, they
 // show as empty boxes, so they get dropped, except gem slots where "[]" would look broken.
 const stripGameIcons = (text) =>
-  text.replace(/(\[(?:§.)*)[-]((?:§.)*\])/g, '$1◆$2').replace(/[-] ?/g, '');
+  text.replace(/(\[(?:§.)*)[-]((?:§.)*\])/g, '$1◆$2').replace(/[-]/g, '');
 
 /** Renders Minecraft's § formatting codes as coloured spans. */
 function mcText(text) {
@@ -82,6 +85,8 @@ function roman(value) {
 }
 
 const plural = (count, word) => `${count} ${word}${count === 1 ? '' : 's'}`;
+const formatTime = (iso) => new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+const currentProfile = () => state.player.profiles.find((profile) => profile.id === state.profileId);
 
 function bar(percent, label) {
   const fill = h('span', { class: `bar-fill${percent >= 100 ? ' complete' : ''}` });
@@ -159,6 +164,31 @@ function statusRows(rows) {
   return rows.map((r) => row(r.optional && r.status !== 'done' ? 'skip' : r.status, r.label, r.value, r.note));
 }
 
+function reforgeSection({ reforge }) {
+  if (!reforge) return null;
+  const listings = plural(reforge.count, 'upgraded listing');
+  const basis =
+    reforge.basedOn === 'weapon'
+      ? `What players use on ${listings} of this weapon on the auction house.`
+      : `Too few of this exact weapon are listed, so this is what players use on ${listings} of similar weapons.`;
+  return section(
+    'Reforge suggestions',
+    0,
+    h('p', { class: 'muted section-intro' }, basis),
+    group(
+      null,
+      reforge.picks.map((pick) =>
+        row(
+          pick.isCurrent ? 'done' : 'pick',
+          pick.isCurrent ? `${pick.name} (yours)` : pick.name,
+          `${pick.share}%`,
+          [pick.source, pick.stats, pick.ability].filter(Boolean).join('. '),
+        ),
+      ),
+    ),
+  );
+}
+
 function weaponDetail(weapon) {
   const { progress, upgrades, gems } = weapon;
   const pending = (rows) => rows.filter((r) => !r.optional && r.status !== 'done').length;
@@ -188,6 +218,7 @@ function weaponDetail(weapon) {
         { class: 'checklist' },
         enchantSection(weapon.enchants),
         section('Books and upgrades', pending(upgrades), group(null, statusRows(upgrades))),
+        reforgeSection(weapon),
         section('Gemstones', pending(gems), group(null, statusRows(gems))),
       ),
       h(
@@ -207,7 +238,7 @@ function weaponDetail(weapon) {
 function selectWeapon(index) {
   state.selected = index;
   // Only the detail panel changes, so the list keeps its scroll position and keyboard focus.
-  const detail = weaponDetail(state.data.weapons[index]);
+  const detail = weaponDetail(currentProfile().weapons[index]);
   document.querySelector('.detail').replaceWith(detail);
   for (const button of document.querySelectorAll('.weapon')) {
     button.setAttribute('aria-pressed', String(Number(button.dataset.index) === index));
@@ -234,30 +265,12 @@ function weaponButton(weapon, index) {
 
 function weaponMatches() {
   const needle = state.filter.trim().toLowerCase();
-  const matches = state.data.weapons
+  const matches = currentProfile()
+    .weapons
     .map((weapon, index) => ({ weapon, index }))
     .filter(({ weapon }) => plainText(weapon.name).toLowerCase().includes(needle));
   if (!matches.length) return h('p', { class: 'muted' }, 'No weapon matches that name.');
   return h('ul', {}, matches.map(({ weapon, index }) => h('li', {}, weaponButton(weapon, index))));
-}
-
-function renderSetup(message) {
-  return h(
-    'section',
-    { class: 'panel setup' },
-    h('h2', {}, 'One-time setup: add an API key'),
-    message && h('p', { class: 'error-text' }, message),
-    h('p', {}, 'Hypixel only shares player data with a key. It stays in a file on this computer, and the page never sees it.'),
-    h(
-      'ol',
-      {},
-      h('li', {}, 'Go to ', h('a', { href: 'https://developer.hypixel.net/', target: '_blank', rel: 'noreferrer' }, 'developer.hypixel.net'), ', log in, and create a key.'),
-      h('li', {}, 'Open the ', h('code', {}, '.env'), ' file in the Hexcheck folder.'),
-      h('li', {}, 'Paste the key after ', h('code', {}, 'HYPIXEL_API_KEY='), ' and save.'),
-      h('li', {}, 'Search again. No restart needed.'),
-    ),
-    h('p', { class: 'muted' }, "Developer keys expire now and then. If searches stop working, make a new key and do the same thing."),
-  );
 }
 
 function renderMessage(title, message) {
@@ -267,61 +280,79 @@ function renderMessage(title, message) {
 function renderInventoryOff(player) {
   return renderMessage(
     "This player's inventory is hidden",
-    `${player} has the Inventory API turned off on this profile. To turn it on, open the SkyBlock Menu in game, then Settings, then API Settings. It can take a few minutes to show up here.`,
+    `${player} has the Inventory API turned off on this profile. To turn it on, open the SkyBlock Menu in game, then Settings, then API Settings. It will show up here after the next update.`,
   );
 }
 
-function renderError(code, message) {
-  if (code === 'no_key') return renderSetup();
-  if (code === 'bad_key') return renderSetup(message);
-  const titles = {
-    player_not_found: 'Player not found',
-    no_profiles: 'No SkyBlock profiles',
-    bad_name: 'Check that username',
-    rate_limited: 'Slow down a little',
-  };
-  return renderMessage(titles[code] ?? "That didn't work", message);
+const ERROR_TITLES = { player_not_found: 'Player not found', no_profiles: 'No SkyBlock profiles' };
+
+function renderNotListed(name) {
+  const { repo } = state.index;
+  return h(
+    'section',
+    { class: 'panel message' },
+    h('h2', {}, `${name} isn't on the list`),
+    h('p', {}, 'Hexcheck can only show players listed in ', repo ? h('a', { href: `https://github.com/${repo}/edit/main/players.txt`, rel: 'noreferrer' }, 'players.txt') : 'players.txt', '. Once a name is added, it shows up after the site rebuilds.'),
+    playerChips(),
+  );
 }
 
-function playerBar(data) {
+function playerChips() {
+  if (!state.index?.players.length) return null;
+  return h(
+    'ul',
+    { class: 'player-chips' },
+    state.index.players.map((player) => h('li', {}, h('button', { type: 'button', class: 'chip', onclick: () => search(player.name) }, player.name))),
+  );
+}
+
+function playerBar(player) {
   const select = h(
     'select',
     {
       id: 'profile',
-      onchange: (event) => search(data.player.name, event.target.value),
+      onchange: (event) => {
+        // Every profile is already in the data file, so switching needs no download.
+        state.profileId = event.target.value;
+        state.selected = 0;
+        state.filter = '';
+        renderResults();
+      },
     },
-    data.profiles.map((p) =>
-      h('option', { value: p.id, selected: p.id === data.profile }, `${p.name}${p.mode ? ` (${p.mode})` : ''}${p.selected ? ' · active' : ''}`),
+    player.profiles.map((p) =>
+      h('option', { value: p.id, selected: p.id === state.profileId }, `${p.name}${p.mode ? ` (${p.mode})` : ''}${p.selected ? ' · active' : ''}`),
     ),
   );
   return h(
     'div',
     { class: 'player-bar' },
-    h('img', { src: `https://mc-heads.net/avatar/${data.player.uuid}/40`, alt: '', width: 40, height: 40 }),
-    h('strong', { class: 'player-name' }, data.player.name),
+    h('img', { src: `https://mc-heads.net/avatar/${player.uuid}/40`, alt: '', width: 40, height: 40 }),
+    h('strong', { class: 'player-name' }, player.name),
     h('label', { for: 'profile', class: 'visually-hidden' }, 'Profile'),
     select,
+    h('span', { class: 'muted updated' }, `Data from ${formatTime(player.updatedAt)}`),
   );
 }
 
 function renderResults() {
-  const { data } = state;
-  const parts = [playerBar(data)];
+  const { player } = state;
+  const profile = currentProfile();
+  const parts = [playerBar(player)];
 
-  if (data.unreadable > 0) {
-    parts.push(h('p', { class: 'callout' }, `${plural(data.unreadable, 'storage container')} couldn't be read, so some weapons may be missing.`));
+  if (profile.unreadable > 0) {
+    parts.push(h('p', { class: 'callout' }, `${plural(profile.unreadable, 'storage container')} couldn't be read, so some weapons may be missing.`));
   }
 
-  if (data.inventoryOff) {
-    parts.push(renderInventoryOff(data.player.name));
-  } else if (!data.weapons.length) {
-    parts.push(renderMessage('No weapons found', `${data.player.name} has no swords or bows in their inventory, ender chest, backpacks or vault on this profile.`));
+  if (profile.inventoryOff) {
+    parts.push(renderInventoryOff(player.name));
+  } else if (!profile.weapons.length) {
+    parts.push(renderMessage('No weapons found', `${player.name} has no swords or bows in their inventory, ender chest, backpacks or vault on this profile.`));
   } else {
     const matches = h('div', { id: 'weapon-matches' }, weaponMatches());
     const filter = h('input', {
       type: 'search',
       class: 'filter',
-      placeholder: `Filter ${plural(data.weapons.length, 'weapon')}`,
+      placeholder: `Filter ${plural(profile.weapons.length, 'weapon')}`,
       'aria-label': 'Filter weapons by name',
       oninput: (event) => {
         state.filter = event.target.value;
@@ -334,7 +365,7 @@ function renderResults() {
         'div',
         { class: 'layout' },
         h('nav', { class: 'weapon-list', 'aria-label': 'Weapons' }, filter, matches),
-        weaponDetail(data.weapons[state.selected]),
+        weaponDetail(profile.weapons[state.selected]),
       ),
     );
   }
@@ -342,34 +373,59 @@ function renderResults() {
   app.replaceChildren(...parts);
 }
 
-async function search(name, profile) {
+async function loadIndex() {
+  if (state.index) return state.index;
+  const response = await fetch('data/index.json');
+  if (!response.ok) throw new Error(`data/index.json returned ${response.status}`);
+  state.index = await response.json();
+  knownPlayers.replaceChildren(...state.index.players.map((player) => h('option', { value: player.name })));
+  return state.index;
+}
+
+async function search(name) {
   const requestId = ++state.requestId;
+  const show = (view, status) => {
+    statusLine.textContent = status;
+    app.replaceChildren(view);
+  };
   document.body.classList.remove('landing');
   nameInput.value = name;
-  if (decodeURIComponent(location.hash.slice(1)) !== name) history.replaceState(null, '', `#${encodeURIComponent(name)}`);
-  statusLine.textContent = `Looking up ${name}`;
-  app.replaceChildren(h('p', { class: 'loading-text' }, `Looking up ${name}...`));
+  history.replaceState(null, '', `#${encodeURIComponent(name)}`);
+
+  if (!USERNAME.test(name)) {
+    show(renderMessage('Check that username', "That isn't a valid Minecraft username."), 'Invalid username');
+    return;
+  }
+  show(h('p', { class: 'loading-text' }, `Looking up ${name}...`), `Looking up ${name}`);
 
   try {
-    const params = new URLSearchParams({ name });
-    if (profile) params.set('profile', profile);
-    const response = await fetch(`/api/weapons?${params}`);
-    const body = await response.json();
+    const index = await loadIndex();
+    const listed = index.players.find((player) => player.file === name.toLowerCase() || player.name.toLowerCase() === name.toLowerCase());
     if (requestId !== state.requestId) return; // A newer search has started.
-    if (!response.ok) {
-      statusLine.textContent = body.message;
-      app.replaceChildren(renderError(body.error, body.message));
+    if (!listed) {
+      show(renderNotListed(name), `${name} isn't on the list`);
       return;
     }
-    state.data = body;
+
+    const response = await fetch(`data/players/${listed.file}.json`);
+    if (!response.ok) throw new Error(`Player file returned ${response.status}`);
+    const body = await response.json();
+    if (requestId !== state.requestId) return;
+    if (body.error) {
+      show(renderMessage(ERROR_TITLES[body.error] ?? "That didn't work", body.message), body.message);
+      return;
+    }
+
+    state.player = body;
+    state.profileId = (body.profiles.find((profile) => profile.selected) ?? body.profiles[0]).id;
     state.selected = 0;
     state.filter = '';
-    document.title = `${body.player.name} · Hexcheck`;
-    statusLine.textContent = `Found ${plural(body.weapons.length, 'weapon')} for ${body.player.name}`;
+    document.title = `${body.name} · Hexcheck`;
+    statusLine.textContent = `Found ${plural(currentProfile().weapons.length, 'weapon')} for ${body.name}`;
     renderResults();
   } catch {
     if (requestId !== state.requestId) return;
-    app.replaceChildren(renderMessage("Can't reach the Hexcheck server", 'Make sure it is still running, then try again.'));
+    show(renderMessage("Couldn't load that", 'Check your connection and try again.'), "Couldn't load that");
   }
 }
 
@@ -379,20 +435,31 @@ form.addEventListener('submit', (event) => {
   if (name) search(name);
 });
 
+function hashName() {
+  try {
+    return decodeURIComponent(location.hash.slice(1));
+  } catch {
+    return '';
+  }
+}
+
 async function start() {
-  const fromLink = decodeURIComponent(location.hash.slice(1));
+  const fromLink = hashName();
   if (fromLink) {
     search(fromLink);
     return;
   }
-  try {
-    const response = await fetch('/api/status');
-    const { hasKey } = await response.json();
-    if (!hasKey) app.replaceChildren(renderSetup());
-  } catch {
-    // The search itself will report a dead server.
-  }
   nameInput.focus();
+  try {
+    const index = await loadIndex();
+    if (!index.players.length) {
+      app.replaceChildren(renderMessage('No players yet', 'Add Minecraft usernames to players.txt in the repo, and they show up here once the site rebuilds.'));
+      return;
+    }
+    app.replaceChildren(h('section', { class: 'known-players' }, playerChips(), h('p', { class: 'muted' }, `Updated ${formatTime(index.updatedAt)}`)));
+  } catch {
+    app.replaceChildren(renderMessage("Couldn't load the player list", 'Check your connection and try again.'));
+  }
 }
 
 start();

@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { decodeItems, buildGameData, analyzeWeapon, analyzeMember } = require('../analyze');
+const { decodeItems, buildGameData, addReforgeUsage, analyzeWeapon, analyzeMember } = require('../analyze');
 const realItem = require('./real-item.json');
 
 // A cut-down copy of the three upstream data files, in their real shapes.
@@ -80,6 +80,35 @@ const game = buildGameData(
     },
   },
 );
+
+const reforgeGame = {
+  ...game,
+  items: new Map([
+    ...game.items,
+    ['WITHER_BLOOD', { id: 'WITHER_BLOOD', name: 'Wither Blood' }],
+    ['STARRED_HYPERION', { id: 'STARRED_HYPERION', name: 'Hyperion', category: 'SWORD', tier: 'LEGENDARY' }],
+    ['MIDAS_SWORD', { id: 'MIDAS_SWORD', name: "Midas' Sword", category: 'SWORD', tier: 'LEGENDARY' }],
+    ['PLAIN_WAND', { id: 'PLAIN_WAND', name: 'Plain Wand', category: 'SWORD', tier: 'EPIC', ability_damage_scaling: 0.3 }],
+  ]),
+  reforges: new Map([
+    ['withered', { name: 'Withered', stone: 'WITHER_BLOOD', types: 'SWORD', stats: { LEGENDARY: { strength: 100 }, MYTHIC: { strength: 135 } }, ability: '§7Grants §c+1  Strength §7per level.' }],
+    ['heroic', { name: 'Heroic', stone: null, types: 'SWORD/ROD', stats: { MYTHIC: { strength: 50, attack_speed: 5 } } }],
+    ['fabled', { name: 'Fabled', stone: 'DRAGON_CLAW', types: 'SWORD', stats: {} }],
+    ['gilded', { name: 'Gilded', stone: 'MIDAS_JEWEL', types: { internalName: ['MIDAS_SWORD'] }, stats: {} }],
+    ['sharp', { name: 'Sharp', stone: null, types: 'SWORD/ROD', stats: {} }],
+  ]),
+  reforgeUsage: {
+    weapons: {
+      HYPERION: { count: 10, reforges: { heroic: 6, withered: 4 } },
+      PLAIN_SWORD: { count: 2, reforges: { sharp: 2 } },
+      MIDAS_SWORD: { count: 8, reforges: { gilded: 8 } },
+    },
+    groups: {
+      SWORD: { count: 25, reforges: { fabled: 20, gilded: 5 } },
+      MAGE_SWORD: { count: 6, reforges: { heroic: 6 } },
+    },
+  },
+};
 
 const item = (extra, lore = ['§6§lLEGENDARY SWORD'], name) => ({
   tag: { ExtraAttributes: { id: 'PLAIN_SWORD', ...extra }, display: { Lore: lore, Name: name } },
@@ -305,6 +334,98 @@ test('enchants whose book excludes a weapon type are not suggested for it', () =
 test('an enchant the book excludes is still recognised if an item really has it', () => {
   const { enchants } = analyzeWeapon(item({ id: 'PLAIN_BOW', enchantments: { ultimate_chimera: 5 } }), 'Inventory', game);
   assert.deepEqual([enchants.ultimate.id, enchants.ultimate.max], ['ultimate_chimera', 5]);
+});
+
+test('reforge suggestions come from that weapon when enough are listed', () => {
+  const { reforge } = analyzeWeapon(item({ id: 'HYPERION', modifier: 'withered' }, ['§d§lMYTHIC DUNGEON SWORD'], '§dWithered Hyperion'), 'Inventory', reforgeGame);
+  assert.equal(reforge.basedOn, 'weapon');
+  assert.equal(reforge.count, 10);
+  assert.deepEqual(reforge.picks.map((p) => [p.id, p.share, p.isCurrent]), [
+    ['heroic', 60, false],
+    ['withered', 40, true],
+  ]);
+  const [heroic, withered] = reforge.picks;
+  assert.equal(heroic.source, 'Blacksmith roll');
+  assert.equal(heroic.stats, '+50 Strength, +5% Attack Speed');
+  assert.equal(withered.source, 'Wither Blood');
+  assert.equal(withered.ability, 'Grants +1 Strength per level.');
+});
+
+test('stats match the rarity of this exact item, recombobulated or not', () => {
+  const legendary = analyzeWeapon(item({ id: 'HYPERION' }, ['§6§lLEGENDARY DUNGEON SWORD']), 'Inventory', reforgeGame);
+  assert.equal(legendary.reforge.picks[1].stats, '+100 Strength');
+  const mythic = analyzeWeapon(item({ id: 'HYPERION' }, ['§d§l§ka§r §d§lMYTHIC DUNGEON SWORD §d§l§ka']), 'Inventory', reforgeGame);
+  assert.equal(mythic.reforge.picks[1].stats, '+135 Strength');
+});
+
+test('starred weapons share suggestions with the normal version', () => {
+  const { reforge } = analyzeWeapon(item({ id: 'STARRED_HYPERION' }), 'Inventory', reforgeGame);
+  assert.equal(reforge.basedOn, 'weapon');
+});
+
+test('rare weapons fall back to similar ones, without item-locked reforges', () => {
+  const { reforge } = analyzeWeapon(item({ id: 'PLAIN_SWORD' }), 'Inventory', reforgeGame);
+  assert.equal(reforge.basedOn, 'group');
+  assert.deepEqual(reforge.picks.map((p) => p.id), ['fabled']);
+  assert.equal(reforge.count, 20); // The 5 Gilded listings can't apply here, so they aren't counted.
+});
+
+test('a locked reforge is still suggested for the weapon it belongs to', () => {
+  const { reforge } = analyzeWeapon(item({ id: 'MIDAS_SWORD' }), 'Inventory', reforgeGame);
+  assert.equal(reforge.picks[0].id, 'gilded');
+});
+
+test('mage weapons get their own suggestions', () => {
+  const { reforge } = analyzeWeapon(item({ id: 'PLAIN_WAND' }), 'Inventory', reforgeGame);
+  assert.deepEqual(reforge.picks.map((p) => p.id), ['heroic']);
+});
+
+test('rarely used reforges are not suggested', () => {
+  const usage = { weapons: { PLAIN_SWORD: { count: 100, reforges: { fabled: 95, sharp: 5 } } }, groups: {} };
+  const { reforge } = analyzeWeapon(item({}), 'Inventory', { ...reforgeGame, reforgeUsage: usage });
+  assert.deepEqual(reforge.picks.map((p) => p.id), ['fabled']);
+});
+
+test('the reforge row points at the most used one, and stays done either way', () => {
+  const offList = analyzeWeapon(item({ id: 'HYPERION', modifier: 'sharp' }), 'Inventory', reforgeGame);
+  assert.deepEqual([rowOf(offList, 'Reforge').status, rowOf(offList, 'Reforge').note], ['done', 'Most used: Heroic']);
+  const onList = analyzeWeapon(item({ id: 'HYPERION', modifier: 'heroic' }), 'Inventory', reforgeGame);
+  assert.equal(rowOf(onList, 'Reforge').note, 'One of the most used');
+  const none = analyzeWeapon(item({ id: 'HYPERION' }), 'Inventory', reforgeGame);
+  assert.deepEqual([rowOf(none, 'Reforge').status, rowOf(none, 'Reforge').note], ['todo', 'Most used: Heroic']);
+});
+
+test('suggestions never change the score', () => {
+  const extra = { id: 'HYPERION', modifier: 'sharp' };
+  assert.deepEqual(analyzeWeapon(item(extra), 'Inventory', reforgeGame).progress, analyzeWeapon(item(extra), 'Inventory', game).progress);
+});
+
+test('with no usage data there are simply no suggestions', () => {
+  const weapon = analyze({ modifier: 'withered' });
+  assert.equal(weapon.reforge, null);
+  assert.equal(rowOf(weapon, 'Reforge').note, undefined);
+});
+
+test('only upgraded weapons with a reforge count towards usage', () => {
+  const usage = { weapons: {}, groups: {} };
+  const items = new Map([
+    ['PLAIN_SWORD', { id: 'PLAIN_SWORD', category: 'SWORD' }],
+    ['STARRED_THING', { id: 'STARRED_THING', category: 'SWORD' }],
+    ['WAND', { id: 'WAND', category: 'SWORD', ability_damage_scaling: 0.3 }],
+    ['SHOVEL', { id: 'SHOVEL', category: 'SPADE' }],
+  ]);
+  const add = (extra) => addReforgeUsage(usage, item(extra), items);
+  add({ modifier: 'fabled', rarity_upgrades: 1 }); // Recombobulated: counts.
+  add({ modifier: 'FABLED', hot_potato_count: 10 }); // Ten books: counts, and case doesn't matter.
+  add({ modifier: 'sharp' }); // Fresh drop: ignored.
+  add({ rarity_upgrades: 1 }); // No reforge: ignored.
+  add({ id: 'SHOVEL', modifier: 'fabled', rarity_upgrades: 1 }); // Not a weapon: ignored.
+  add({ id: 'STARRED_THING', modifier: 'withered', upgrade_level: 5, enchantments: Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`e${i}`, 1])) });
+  add({ id: 'WAND', modifier: 'heroic', rarity_upgrades: 1 });
+  assert.deepEqual(usage.weapons.PLAIN_SWORD, { count: 2, reforges: { fabled: 2 } });
+  assert.deepEqual(usage.weapons.THING, { count: 1, reforges: { withered: 1 } });
+  assert.deepEqual(usage.groups.SWORD.reforges, { fabled: 2, withered: 1 });
+  assert.deepEqual(usage.groups.MAGE_SWORD.reforges, { heroic: 1 });
 });
 
 test('reports when the inventory API is off', () => {

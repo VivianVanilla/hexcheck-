@@ -1,0 +1,2 @@
+# Put one Minecraft username per line, then commit and push.
+# Only these players can be searched on the site.
