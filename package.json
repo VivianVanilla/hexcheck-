@@ -4,10 +4,10 @@
   "private": true,
   "description": "See what's left to max any Hypixel SkyBlock weapon.",
   "scripts": {
-    "build": "node scripts/build.js",
-    "test": "node --test"
+    "test": "node --test",
+    "update-reforges": "node scripts/update-reforge-usage.js"
   },
   "engines": {
-    "node": ">=20.12"
+    "node": "24.x"
   }
 }

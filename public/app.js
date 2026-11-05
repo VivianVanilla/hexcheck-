@@ -5,9 +5,7 @@ const form = document.getElementById('search');
 const nameInput = document.getElementById('name');
 const statusLine = document.getElementById('status');
 
-const knownPlayers = document.getElementById('known-players');
-
-const state = { index: null, player: null, profileId: null, selected: 0, filter: '', requestId: 0 };
+const state = { player: null, profileId: null, selected: 0, filter: '', requestId: 0 };
 const USERNAME = /^[A-Za-z0-9_]{1,16}$/;
 
 const MC_COLORS = {
@@ -280,31 +278,18 @@ function renderMessage(title, message) {
 function renderInventoryOff(player) {
   return renderMessage(
     "This player's inventory is hidden",
-    `${player} has the Inventory API turned off on this profile. To turn it on, open the SkyBlock Menu in game, then Settings, then API Settings. It will show up here after the next update.`,
+    `${player} has the Inventory API turned off on this profile. To turn it on, open the SkyBlock Menu in game, then Settings, then API Settings. It can take a few minutes to show up here.`,
   );
 }
 
-const ERROR_TITLES = { player_not_found: 'Player not found', no_profiles: 'No SkyBlock profiles' };
-
-function renderNotListed(name) {
-  const { repo } = state.index;
-  return h(
-    'section',
-    { class: 'panel message' },
-    h('h2', {}, `${name} isn't on the list`),
-    h('p', {}, 'Hexcheck can only show players listed in ', repo ? h('a', { href: `https://github.com/${repo}/edit/main/players.txt`, rel: 'noreferrer' }, 'players.txt') : 'players.txt', '. Once a name is added, it shows up after the site rebuilds.'),
-    playerChips(),
-  );
-}
-
-function playerChips() {
-  if (!state.index?.players.length) return null;
-  return h(
-    'ul',
-    { class: 'player-chips' },
-    state.index.players.map((player) => h('li', {}, h('button', { type: 'button', class: 'chip', onclick: () => search(player.name) }, player.name))),
-  );
-}
+const ERROR_TITLES = {
+  player_not_found: 'Player not found',
+  no_profiles: 'No SkyBlock profiles',
+  bad_name: 'Check that username',
+  rate_limited: 'Slow down a little',
+  no_key: 'Searches are down',
+  bad_key: 'Searches are down',
+};
 
 function playerBar(player) {
   const select = h(
@@ -312,7 +297,7 @@ function playerBar(player) {
     {
       id: 'profile',
       onchange: (event) => {
-        // Every profile is already in the data file, so switching needs no download.
+        // Every profile came back in the first response, so switching needs no download.
         state.profileId = event.target.value;
         state.selected = 0;
         state.filter = '';
@@ -373,15 +358,6 @@ function renderResults() {
   app.replaceChildren(...parts);
 }
 
-async function loadIndex() {
-  if (state.index) return state.index;
-  const response = await fetch('data/index.json');
-  if (!response.ok) throw new Error(`data/index.json returned ${response.status}`);
-  state.index = await response.json();
-  knownPlayers.replaceChildren(...state.index.players.map((player) => h('option', { value: player.name })));
-  return state.index;
-}
-
 async function search(name) {
   const requestId = ++state.requestId;
   const show = (view, status) => {
@@ -399,22 +375,16 @@ async function search(name) {
   show(h('p', { class: 'loading-text' }, `Looking up ${name}...`), `Looking up ${name}`);
 
   try {
-    const index = await loadIndex();
-    const listed = index.players.find((player) => player.file === name.toLowerCase() || player.name.toLowerCase() === name.toLowerCase());
-    if (requestId !== state.requestId) return; // A newer search has started.
-    if (!listed) {
-      show(renderNotListed(name), `${name} isn't on the list`);
-      return;
-    }
-
-    const response = await fetch(`data/players/${listed.file}.json`);
-    if (!response.ok) throw new Error(`Player file returned ${response.status}`);
+    // Lowercase, so different capitalisations of a name share one cached answer.
+    const response = await fetch(`/api/weapons?name=${name.toLowerCase()}`);
     const body = await response.json();
-    if (requestId !== state.requestId) return;
-    if (body.error) {
+    if (requestId !== state.requestId) return; // A newer search has started.
+    if (!response.ok) {
       show(renderMessage(ERROR_TITLES[body.error] ?? "That didn't work", body.message), body.message);
       return;
     }
+    // Never show the wrong player's weapons, even if a cache somewhere mixes up two searches.
+    if (body.name.toLowerCase() !== name.toLowerCase()) throw new Error(`Asked for ${name}, got ${body.name}`);
 
     state.player = body;
     state.profileId = (body.profiles.find((profile) => profile.selected) ?? body.profiles[0]).id;
@@ -443,23 +413,10 @@ function hashName() {
   }
 }
 
-async function start() {
+function start() {
   const fromLink = hashName();
-  if (fromLink) {
-    search(fromLink);
-    return;
-  }
-  nameInput.focus();
-  try {
-    const index = await loadIndex();
-    if (!index.players.length) {
-      app.replaceChildren(renderMessage('No players yet', 'Add Minecraft usernames to players.txt in the repo, and they show up here once the site rebuilds.'));
-      return;
-    }
-    app.replaceChildren(h('section', { class: 'known-players' }, playerChips(), h('p', { class: 'muted' }, `Updated ${formatTime(index.updatedAt)}`)));
-  } catch {
-    app.replaceChildren(renderMessage("Couldn't load the player list", 'Check your connection and try again.'));
-  }
+  if (fromLink) search(fromLink);
+  else nameInput.focus();
 }
 
 start();

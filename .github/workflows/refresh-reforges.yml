@@ -1,0 +1,33 @@
+name: Refresh reforge data
+
+on:
+  # The first of every month. Reforge choices change slowly, so this is plenty.
+  schedule:
+    - cron: '23 6 1 * *'
+  # Adds a "Run workflow" button on the repo's Actions tab, to refresh right now.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: npm test
+      - run: npm run update-reforges
+      - name: Commit the new data
+        # Vercel's free plan only deploys commits authored by the account owner, so this commits
+        # under the repo owner's name instead of the usual Actions bot. The push redeploys the site.
+        env:
+          OWNER: ${{ github.repository_owner }}
+          OWNER_ID: ${{ github.repository_owner_id }}
+        run: |
+          git config user.name "$OWNER"
+          git config user.email "$OWNER_ID+$OWNER@users.noreply.github.com"
+          git add data/reforge-usage.json
+          git diff --cached --quiet || { git commit -m "Refresh reforge usage data" && git push; }

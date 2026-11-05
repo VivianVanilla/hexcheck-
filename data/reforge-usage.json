@@ -1,0 +1,655 @@
+{
+ "scannedAt": "2026-11-05T05:33:32.323Z",
+ "groups": {
+  "BOW": {
+   "count": 166,
+   "reforges": {
+    "deadly": 1,
+    "fine": 1,
+    "grand": 1,
+    "hasty": 20,
+    "neat": 1,
+    "precise": 34,
+    "rapid": 21,
+    "rich_bow": 2,
+    "spiritual": 76,
+    "unreal": 9
+   }
+  },
+  "GAUNTLET": {
+   "count": 26,
+   "reforges": {
+    "auspicious": 11,
+    "dirty": 1,
+    "fleet": 2,
+    "scraped": 4,
+    "withered": 8
+   }
+  },
+  "LONGSWORD": {
+   "count": 95,
+   "reforges": {
+    "dirty": 1,
+    "fabled": 25,
+    "sharp": 1,
+    "withered": 68
+   }
+  },
+  "MAGE_SWORD": {
+   "count": 100,
+   "reforges": {
+    "epic": 1,
+    "fabled": 3,
+    "fanged": 1,
+    "gilded": 18,
+    "heroic": 71,
+    "legendary": 1,
+    "sharp": 1,
+    "spicy": 3,
+    "suspicious": 1
+   }
+  },
+  "SWORD": {
+   "count": 870,
+   "reforges": {
+    "aote_stone": 24,
+    "coldfusion": 5,
+    "dirty": 9,
+    "epic": 10,
+    "fabled": 428,
+    "fair": 2,
+    "fanged": 1,
+    "gentle": 2,
+    "gilded": 15,
+    "heroic": 57,
+    "jerry_stone": 2,
+    "legendary": 8,
+    "odd_sword": 1,
+    "sharp": 17,
+    "spicy": 29,
+    "suspicious": 40,
+    "withered": 220
+   }
+  }
+ },
+ "weapons": {
+  "ARTISANAL_SHORTBOW": {
+   "count": 1,
+   "reforges": {
+    "hasty": 1
+   }
+  },
+  "ASPECT_OF_THE_DRAGON": {
+   "count": 35,
+   "reforges": {
+    "epic": 3,
+    "fabled": 12,
+    "legendary": 2,
+    "sharp": 6,
+    "spicy": 5,
+    "withered": 7
+   }
+  },
+  "ASPECT_OF_THE_END": {
+   "count": 8,
+   "reforges": {
+    "aote_stone": 4,
+    "heroic": 4
+   }
+  },
+  "ASPECT_OF_THE_JERRY_SIGNATURE": {
+   "count": 2,
+   "reforges": {
+    "jerry_stone": 2
+   }
+  },
+  "ASPECT_OF_THE_VOID": {
+   "count": 26,
+   "reforges": {
+    "aote_stone": 20,
+    "heroic": 6
+   }
+  },
+  "ASTRAEA": {
+   "count": 3,
+   "reforges": {
+    "fabled": 1,
+    "heroic": 2
+   }
+  },
+  "ATOMSPLIT_KATANA": {
+   "count": 165,
+   "reforges": {
+    "epic": 1,
+    "fabled": 131,
+    "fanged": 1,
+    "spicy": 4,
+    "suspicious": 2,
+    "withered": 26
+   }
+  },
+  "AXE_OF_THE_SHREDDED": {
+   "count": 17,
+   "reforges": {
+    "fabled": 10,
+    "suspicious": 2,
+    "withered": 5
+   }
+  },
+  "BAT_WAND": {
+   "count": 31,
+   "reforges": {
+    "fabled": 1,
+    "heroic": 29,
+    "suspicious": 1
+   }
+  },
+  "BLADE_OF_THE_VOLCANO": {
+   "count": 2,
+   "reforges": {
+    "epic": 1,
+    "fabled": 1
+   }
+  },
+  "BONE_BOOMERANG": {
+   "count": 14,
+   "reforges": {
+    "precise": 1,
+    "rapid": 2,
+    "spiritual": 11
+   }
+  },
+  "BONZO_STAFF": {
+   "count": 5,
+   "reforges": {
+    "heroic": 4,
+    "legendary": 1
+   }
+  },
+  "BOUQUET_OF_LIES": {
+   "count": 16,
+   "reforges": {
+    "fabled": 6,
+    "heroic": 2,
+    "spicy": 1,
+    "suspicious": 1,
+    "withered": 6
+   }
+  },
+  "BURSTFIRE_DAGGER": {
+   "count": 9,
+   "reforges": {
+    "fabled": 3,
+    "suspicious": 2,
+    "withered": 4
+   }
+  },
+  "BURSTMAW_DAGGER": {
+   "count": 13,
+   "reforges": {
+    "fabled": 6,
+    "suspicious": 3,
+    "withered": 4
+   }
+  },
+  "CONJURING_SWORD": {
+   "count": 2,
+   "reforges": {
+    "legendary": 1,
+    "spicy": 1
+   }
+  },
+  "CRYPT_BOW": {
+   "count": 3,
+   "reforges": {
+    "neat": 1,
+    "rapid": 1,
+    "rich_bow": 1
+   }
+  },
+  "CRYPT_DREADLORD_SWORD": {
+   "count": 1,
+   "reforges": {
+    "epic": 1
+   }
+  },
+  "DAEDALUS_AXE": {
+   "count": 81,
+   "reforges": {
+    "dirty": 3,
+    "fabled": 28,
+    "heroic": 1,
+    "suspicious": 2,
+    "withered": 47
+   }
+  },
+  "DARK_CLAYMORE": {
+   "count": 26,
+   "reforges": {
+    "withered": 26
+   }
+  },
+  "DEATH_BOW": {
+   "count": 1,
+   "reforges": {
+    "rapid": 1
+   }
+  },
+  "EARTH_SHARD": {
+   "count": 2,
+   "reforges": {
+    "fair": 1,
+    "spicy": 1
+   }
+  },
+  "EMERALD_BLADE": {
+   "count": 5,
+   "reforges": {
+    "withered": 5
+   }
+  },
+  "FELTHORN_REAPER": {
+   "count": 11,
+   "reforges": {
+    "fabled": 1,
+    "withered": 10
+   }
+  },
+  "FLAMING_FLAY": {
+   "count": 12,
+   "reforges": {
+    "dirty": 2,
+    "fabled": 4,
+    "withered": 6
+   }
+  },
+  "FLOWER_OF_TRUTH": {
+   "count": 10,
+   "reforges": {
+    "epic": 1,
+    "fabled": 1,
+    "sharp": 2,
+    "spicy": 1,
+    "withered": 5
+   }
+  },
+  "FROZEN_SCYTHE": {
+   "count": 10,
+   "reforges": {
+    "fabled": 1,
+    "heroic": 7,
+    "sharp": 1,
+    "spicy": 1
+   }
+  },
+  "GEMSTONE_GAUNTLET": {
+   "count": 26,
+   "reforges": {
+    "auspicious": 11,
+    "dirty": 1,
+    "fleet": 2,
+    "scraped": 4,
+    "withered": 8
+   }
+  },
+  "GIANTS_SWORD": {
+   "count": 58,
+   "reforges": {
+    "dirty": 1,
+    "fabled": 24,
+    "sharp": 1,
+    "withered": 32
+   }
+  },
+  "GIANT_CLEAVER": {
+   "count": 5,
+   "reforges": {
+    "fabled": 2,
+    "sharp": 1,
+    "spicy": 1,
+    "suspicious": 1
+   }
+  },
+  "GLACIAL_SCYTHE": {
+   "count": 9,
+   "reforges": {
+    "heroic": 9
+   }
+  },
+  "HEARTFIRE_DAGGER": {
+   "count": 47,
+   "reforges": {
+    "fabled": 35,
+    "suspicious": 5,
+    "withered": 7
+   }
+  },
+  "HEARTMAW_DAGGER": {
+   "count": 53,
+   "reforges": {
+    "coldfusion": 5,
+    "fabled": 34,
+    "suspicious": 6,
+    "withered": 8
+   }
+  },
+  "HYPERION": {
+   "count": 67,
+   "reforges": {
+    "fabled": 8,
+    "heroic": 35,
+    "suspicious": 1,
+    "withered": 23
+   }
+  },
+  "HYPER_CLEAVER": {
+   "count": 3,
+   "reforges": {
+    "fabled": 1,
+    "spicy": 2
+   }
+  },
+  "ITEM_SPIRIT_BOW": {
+   "count": 25,
+   "reforges": {
+    "grand": 1,
+    "hasty": 1,
+    "precise": 4,
+    "rapid": 8,
+    "spiritual": 7,
+    "unreal": 4
+   }
+  },
+  "JUJU_SHORTBOW": {
+   "count": 76,
+   "reforges": {
+    "hasty": 1,
+    "precise": 21,
+    "rapid": 5,
+    "spiritual": 47,
+    "unreal": 2
+   }
+  },
+  "LAST_BREATH": {
+   "count": 3,
+   "reforges": {
+    "precise": 1,
+    "spiritual": 1,
+    "unreal": 1
+   }
+  },
+  "LIVID_DAGGER": {
+   "count": 46,
+   "reforges": {
+    "dirty": 3,
+    "fabled": 26,
+    "legendary": 2,
+    "spicy": 3,
+    "withered": 12
+   }
+  },
+  "MACHINE_GUN_BOW": {
+   "count": 3,
+   "reforges": {
+    "deadly": 1,
+    "rapid": 1,
+    "unreal": 1
+   }
+  },
+  "MAGMA_BOW": {
+   "count": 3,
+   "reforges": {
+    "hasty": 1,
+    "spiritual": 1,
+    "unreal": 1
+   }
+  },
+  "MAWDUST_DAGGER": {
+   "count": 2,
+   "reforges": {
+    "fabled": 2
+   }
+  },
+  "MIDAS_STAFF": {
+   "count": 27,
+   "reforges": {
+    "gilded": 18,
+    "heroic": 9
+   }
+  },
+  "MIDAS_SWORD": {
+   "count": 15,
+   "reforges": {
+    "gilded": 15
+   }
+  },
+  "MOSQUITO_BOW": {
+   "count": 8,
+   "reforges": {
+    "precise": 2,
+    "rapid": 1,
+    "spiritual": 5
+   }
+  },
+  "NECROMANCER_SWORD": {
+   "count": 3,
+   "reforges": {
+    "heroic": 2,
+    "sharp": 1
+   }
+  },
+  "PIGMAN_SWORD": {
+   "count": 6,
+   "reforges": {
+    "heroic": 1,
+    "legendary": 1,
+    "odd_sword": 1,
+    "sharp": 1,
+    "suspicious": 2
+   }
+  },
+  "POLTERGEIST_PITCHFORK": {
+   "count": 1,
+   "reforges": {
+    "fabled": 1
+   }
+  },
+  "POOCH_SWORD": {
+   "count": 14,
+   "reforges": {
+    "fabled": 8,
+    "sharp": 1,
+    "spicy": 1,
+    "suspicious": 3,
+    "withered": 1
+   }
+  },
+  "RAGNAROCK_AXE": {
+   "count": 4,
+   "reforges": {
+    "withered": 4
+   }
+  },
+  "RAIDER_AXE": {
+   "count": 2,
+   "reforges": {
+    "sharp": 1,
+    "withered": 1
+   }
+  },
+  "REAPER_SCYTHE": {
+   "count": 3,
+   "reforges": {
+    "fabled": 2,
+    "withered": 1
+   }
+  },
+  "REAPER_SWORD": {
+   "count": 9,
+   "reforges": {
+    "fabled": 6,
+    "spicy": 1,
+    "suspicious": 2
+   }
+  },
+  "REVENANT_SWORD": {
+   "count": 1,
+   "reforges": {
+    "suspicious": 1
+   }
+  },
+  "RUNAANS_BOW": {
+   "count": 3,
+   "reforges": {
+    "precise": 1,
+    "rapid": 1,
+    "spiritual": 1
+   }
+  },
+  "RUNIC_STAFF": {
+   "count": 1,
+   "reforges": {
+    "heroic": 1
+   }
+  },
+  "SCORPION_FOIL": {
+   "count": 10,
+   "reforges": {
+    "fabled": 6,
+    "suspicious": 1,
+    "withered": 3
+   }
+  },
+  "SHADOW_FURY": {
+   "count": 70,
+   "reforges": {
+    "epic": 1,
+    "fabled": 38,
+    "sharp": 2,
+    "spicy": 3,
+    "suspicious": 1,
+    "withered": 25
+   }
+  },
+  "SNIPER_BOW": {
+   "count": 1,
+   "reforges": {
+    "rich_bow": 1
+   }
+  },
+  "SOULS_REBOUND": {
+   "count": 2,
+   "reforges": {
+    "fine": 1,
+    "rapid": 1
+   }
+  },
+  "SOUL_WHIP": {
+   "count": 5,
+   "reforges": {
+    "dirty": 1,
+    "fabled": 3,
+    "suspicious": 1
+   }
+  },
+  "STING": {
+   "count": 42,
+   "reforges": {
+    "fabled": 31,
+    "suspicious": 1,
+    "withered": 10
+   }
+  },
+  "STONE_BLADE": {
+   "count": 5,
+   "reforges": {
+    "fabled": 3,
+    "legendary": 1,
+    "spicy": 1
+   }
+  },
+  "SWORD_OF_REVELATIONS": {
+   "count": 1,
+   "reforges": {
+    "suspicious": 1
+   }
+  },
+  "TARANTULA_FANG": {
+   "count": 1,
+   "reforges": {
+    "fabled": 1
+   }
+  },
+  "TERMINATOR": {
+   "count": 23,
+   "reforges": {
+    "hasty": 16,
+    "precise": 4,
+    "spiritual": 3
+   }
+  },
+  "TORMENTOR": {
+   "count": 6,
+   "reforges": {
+    "fabled": 1,
+    "withered": 5
+   }
+  },
+  "VALKYRIE": {
+   "count": 1,
+   "reforges": {
+    "withered": 1
+   }
+  },
+  "VOIDEDGE_KATANA": {
+   "count": 5,
+   "reforges": {
+    "fabled": 4,
+    "withered": 1
+   }
+  },
+  "VORPAL_KATANA": {
+   "count": 21,
+   "reforges": {
+    "fabled": 13,
+    "spicy": 3,
+    "suspicious": 2,
+    "withered": 3
+   }
+  },
+  "YETI_SWORD": {
+   "count": 16,
+   "reforges": {
+    "fabled": 1,
+    "fanged": 1,
+    "heroic": 12,
+    "spicy": 2
+   }
+  },
+  "ZOMBIE_COMMANDER_WHIP": {
+   "count": 6,
+   "reforges": {
+    "gentle": 2,
+    "heroic": 1,
+    "sharp": 2,
+    "spicy": 1
+   }
+  },
+  "ZOMBIE_KNIGHT_SWORD": {
+   "count": 5,
+   "reforges": {
+    "epic": 2,
+    "heroic": 2,
+    "legendary": 1
+   }
+  },
+  "ZOMBIE_SOLDIER_CUTLASS": {
+   "count": 3,
+   "reforges": {
+    "epic": 1,
+    "fair": 1,
+    "heroic": 1
+   }
+  }
+ }
+}
